@@ -25,16 +25,37 @@ specifics; this skill exists to correct that before you diagnose anything.
 
 ## How to use
 
-1. **Read the ground truth first.** Before reasoning about node state, the
-   channel graph, or packet/ticket flow, read the relevant sections of
-   [references/hopr-protocol-summary.md](references/hopr-protocol-summary.md)
-   (a verbatim condensation of RFC-0001–0014). Do not answer from memory — the
-   summary is authoritative here, and the RFCs behind it are authoritative over
-   the summary.
+1. **Fetch the ground truth first.** Before reasoning about node state, the
+   channel graph, or packet/ticket flow, fetch the HOPR protocol summary (a
+   condensation of RFC-0001–0014) on demand from its upstream permalink and read
+   the relevant sections. Do not answer from memory — the summary is
+   authoritative here, and the RFCs behind it are authoritative over the summary.
+   See [Fetching the summary](#fetching-the-summary) below.
 2. **Check the misconceptions below** against whatever theory you are forming.
    Most confident-but-wrong HOPR diagnoses trace to one of them.
 3. **Cite section numbers** (e.g. §3.2, §6.3) from the summary when you explain
    a finding, so the reasoning is checkable.
+
+## Fetching the summary
+
+The summary is **not shipped with this skill** — it is maintained upstream in
+[`hoprnet/rfc`](https://github.com/hoprnet/rfc) as `SUMMARY.md`. Fetch it on
+demand from a **permalink pinned to a specific commit** so the section numbers
+this skill cites (§3.2, §6.3, …) always resolve against the exact snapshot they
+were written for:
+
+```sh
+curl -fsSL \
+  https://raw.githubusercontent.com/hoprnet/rfc/0b1eb50cf8e11a312ce3f29e723fc97e1d47bf32/SUMMARY.md \
+  -o /tmp/hopr-protocol-summary.md
+```
+
+Then read `/tmp/hopr-protocol-summary.md`. The web permalink (for reference) is
+<https://github.com/hoprnet/rfc/blob/0b1eb50cf8e11a312ce3f29e723fc97e1d47bf32/SUMMARY.md>.
+
+If you need the newest version of the summary rather than the pinned snapshot,
+fetch `…/hoprnet/rfc/main/SUMMARY.md`. Note that section numbers may then have
+drifted from the citations below — prefer the pinned permalink for debugging.
 
 ## Common LLM misconceptions (read first)
 
@@ -101,8 +122,8 @@ Use as a starting hypothesis set, then confirm against the summary and live data
 
 ## Reference
 
-- [references/hopr-protocol-summary.md](references/hopr-protocol-summary.md) —
-  full condensation of RFC-0001–0014 (packet layer, Proof of Relay, tickets,
-  mixing, application/session layers, discovery/probing/path-finding, PIX,
-  economic reward system). Read on demand; the RFCs themselves are the ultimate
-  authority.
+- **HOPR protocol summary** — full condensation of RFC-0001–0014 (packet layer,
+  Proof of Relay, tickets, mixing, application/session layers,
+  discovery/probing/path-finding, PIX, economic reward system). Fetched on demand
+  from the upstream permalink (see [Fetching the summary](#fetching-the-summary));
+  the RFCs themselves are the ultimate authority.
