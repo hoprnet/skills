@@ -120,6 +120,15 @@ Use as a starting hypothesis set, then confirm against the summary and live data
 | Exit / recipient not paid   | Packet layer never pays the destination — need PIX; PIX agreement aborted; fewer than `t+1` valid shares; no relay on forward or return path; allocation expired | §3.2, §7         |
 | Reply cannot be sent        | Out of SURBs (`0x03`) / SURB distress (`0x01`); `ReplyOpener` state lost; return path edges down                                                                 | §2.4, §5.1       |
 
+## Benchmarking HOPR components
+
+Domain gotchas on top of the general `performance` skill's benchmarking methodology:
+
+- Use realistic parameters — e.g. a winning probability around 1%, not 100%. An always-win ticket changes the code path under test (PoR, redemption) and doesn't represent production load.
+- Use bounded channels matching production capacity, not unbounded ones.
+- Include the mixer adapter so its per-hop delay counts as real cost instead of being stripped out as noise. (§4)
+- n-hop terminology: `n` = number of relayers (intermediate hops), not the total number of hops in the path; `n=0` means point-to-point (direct, no relay).
+
 ## Reference
 
 - **HOPR protocol summary** — full condensation of RFC-0001–0014 (packet layer,
