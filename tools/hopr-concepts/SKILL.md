@@ -1,0 +1,165 @@
+---
+name: hopr-concepts
+description: >
+  HOPR mixnet debugging aid. Loads ground-truth HOPR protocol knowledge
+  (RFC-0001–0014: SPHINX packets, Proof of Relay, tickets and incentives,
+  mixing, sessions, path-finding, PIX) plus hard-won Rust-implementation
+  gotchas, so reasoning about a live network is correct rather than
+  plausible-but-wrong. Use whenever debugging or operating over a HOPR network —
+  a node is not relaying, tickets are not winning or redeeming, a payment channel
+  will not open or close, packets are dropped, a session will not establish,
+  path-finding returns no route, mixing latency looks wrong, SURBs run out, or
+  Exit/PIX incentives misbehave. Trigger on "debug HOPR", "HOPR node", "hoprd",
+  "channel graph", "relay", "ticket", "Proof of Relay", "PoR", "SURB", "why is
+  my node not earning", "path not found", or mentions of hops, the channel graph,
+  or the HOPR reward/Cover-Traffic system. Do not use for generic non-HOPR
+  networking, other mixnets or VPNs, or HOPR token price/trading questions —
+  this is HOPR protocol and node debugging only.
+---
+
+# HOPR Concepts — protocol knowledge aid for network debugging
+
+This skill is an **aid for the debugger, not a debugger**. It supplies the
+side knowledge you need to _see and interpret_ what is happening inside a HOPR
+network — node state, the channel graph, packet and ticket flow, incentives —
+so your debugging is grounded in how the protocol actually works. General
+reasoning about HOPR is reliably wrong on the incentive and topology
+specifics; this skill exists to correct that before you diagnose anything.
+
+## How to use
+
+1. **Fetch the ground truth first.** Before reasoning about node state, the
+   channel graph, or packet/ticket flow, fetch the HOPR protocol summary (a
+   condensation of RFC-0001–0014) on demand from its upstream permalink and read
+   the relevant sections. Reason from the fetched summary and cite its section for
+   each claim; treat recalled HOPR knowledge as a hypothesis to verify against it,
+   not as an answer — generic HOPR reasoning is reliably wrong here. The RFCs behind
+   the summary are authoritative over the summary. See
+   [Fetching the summary](#fetching-the-summary) below.
+2. **Check the misconceptions below** against whatever theory you are forming.
+   Most confident-but-wrong HOPR diagnoses trace to one of them.
+3. **Cite section numbers** (e.g. §3.2, §6.3) from the summary when you explain
+   a finding, so the reasoning is checkable.
+4. **Reach for the deep references** when the symptom is implementation-level
+   (see [Deeper references](#deeper-references)) — the summary covers protocol
+   design, not the emergent behavior of the current Rust code.
+
+## Fetching the summary
+
+The summary is **not shipped with this skill** — it is maintained upstream in
+[`hoprnet/rfc`](https://github.com/hoprnet/rfc) as `SUMMARY.md`. Fetch it on
+demand from a **permalink pinned to a specific commit** so the section numbers
+this skill cites (§3.2, §6.3, …) always resolve against the exact snapshot they
+were written for:
+
+```sh
+curl -fsSL \
+  https://raw.githubusercontent.com/hoprnet/rfc/0b1eb50cf8e11a312ce3f29e723fc97e1d47bf32/SUMMARY.md \
+  -o /tmp/hopr-protocol-summary.md
+```
+
+Then read `/tmp/hopr-protocol-summary.md`. The web permalink (for reference) is
+<https://github.com/hoprnet/rfc/blob/0b1eb50cf8e11a312ce3f29e723fc97e1d47bf32/SUMMARY.md>.
+
+If you need the newest version of the summary rather than the pinned snapshot,
+fetch `…/hoprnet/rfc/main/SUMMARY.md`. Note that section numbers may then have
+drifted from the citations below — prefer the pinned permalink for debugging.
+
+## Common LLM misconceptions (read first)
+
+Each is stated as _wrong → right_, with the summary section that settles it.
+
+- **Channels are bidirectional** → they are **unidirectional**. `A→B` and
+  `B→A` are separate channels; at most one per direction, both may coexist.
+  (§3.1)
+- **The recipient earns from receiving** → the **destination earns nothing at
+  the packet layer**. The last ticket is zero-value, zero-probability. Paying
+  Exit/destination nodes is precisely the gap PIX (§7) fills — do not expect a
+  recipient to be paid by the relay mechanism. (§3.2, §7)
+- **Every relayed packet pays** → tickets pay **probabilistically** via a VRF
+  (`luck < encoded_win_prob`). A relayer with few or no redeemed tickets over a
+  short window is not necessarily broken. (§3.2)
+- **A ticket is redeemable once issued** → it becomes redeemable only **after
+  the next hop acknowledges** (Proof of Relay). An "unredeemable ticket" usually
+  means the downstream acknowledgement never arrived. (§2.5, §3.2)
+- **Every hop needs an open channel** → the **final hop needs no channel**;
+  every _non-final_ edge does. (§6.1)
+- **Path-finding picks the shortest / lowest-latency path** → it samples
+  **weighted-random by path value** (product of edge costs), capping
+  `max_paths = 8`, cached 60 s. Two runs can pick different paths. (§6.3)
+- **Extra latency means a fault** → the **mixer deliberately delays** every
+  forwarded packet by a uniform random delay (default 0–200 ms). Added latency
+  is by design. (§4)
+- **On-chain channel = usable edge** → a usable edge needs **both** an OPEN
+  on-chain channel **and** transport connectivity, plus the node's on-chain
+  announcement. (§6.1)
+- **Dropped packets mean packet loss** → replay protection **silently drops
+  duplicate `ReplayTag`s**; retried/looped packets can be dropped as replays.
+  (§2.2)
+
+## Node state & channel-graph mental model
+
+- **Channel lifecycle:** `OPEN → PENDING_TO_CLOSE` (grace period `T_closure`
+  for the destination to redeem outstanding tickets) `→ CLOSED` (which
+  increments `channel_epoch`). Tickets carry a `channel_epoch` and a
+  monotonic `ticket_index`; a mismatch makes them unredeemable. (§3.1)
+- **Identity binding:** the announcement contract binds off-chain packet key ↔
+  chain account ↔ transport multiaddress. A node missing any binding is not a
+  usable relay. (§6.1)
+- **The channel graph is the canonical topology store.** Reason about
+  reachability and routing from it (OPEN channels + connectivity + scores),
+  not from raw peer lists. (§3.1, §6.1, §6.3)
+- **Edge scoring:** probe success rate × step-function latency score, with
+  `edge_penalty = 0.5` for unprobed edges and `min_ack_rate = 0.1`. Low-scoring
+  edges are passively starved of traffic. (§6.2, §6.3)
+
+## Symptom → likely cause
+
+Use as a starting hypothesis set, then confirm against the summary and live data.
+
+| Symptom                     | Likely causes (check in order)                                                                                                                                   | §                |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| Node relays but never earns | Probabilistic win prob (small sample); downstream acks missing (PoR incomplete); it is acting as the final hop                                                   | §2.5, §3.2       |
+| Ticket will not redeem      | `channel_epoch` mismatch (channel closed/reopened); `ticket_index` ordering; PoR challenge never completed; channel `PENDING_TO_CLOSE`/`CLOSED`                  | §2.5, §3.1, §3.2 |
+| No path found               | A non-final edge lacks an OPEN channel or connectivity; edges starved below `min_ack_rate`; more than 3 relay hops requested; `max_paths` exhausted              | §6.1, §6.2, §6.3 |
+| Session will not establish  | 30 s handshake timeout; no SURBs available; Exit out of slots or busy (`SessionError` `0x01`/`0x02`); unknown target (`0x00`)                                    | §5.2             |
+| Packets dropped             | Mixer backpressure (bounded queue); duplicate `ReplayTag`; reliable-mode retransmissions exhausted (≤3)                                                          | §2.2, §4, §5.3   |
+| High/variable latency       | Per-hop mixing delay by design (0–200 ms × hops); path re-sampled from cache                                                                                     | §4, §6.3         |
+| Exit / recipient not paid   | Packet layer never pays the destination — need PIX; PIX agreement aborted; fewer than `t+1` valid shares; no relay on forward or return path; allocation expired | §3.2, §7         |
+| Reply cannot be sent        | Out of SURBs (`0x03`) / SURB distress (`0x01`); `ReplyOpener` state lost; return path edges down                                                                 | §2.4, §5.1       |
+
+If the symptom sits below the protocol layer — SURB supply collapsing, sessions
+not honoring flow-control, a node drifting toward OOM, wire-format mismatches —
+go to the implementation references next; those behaviors are not in the RFCs.
+
+## Deeper references
+
+Load these only when the symptom points at them — the SKILL.md body above covers
+the protocol-level ground truth needed for most diagnoses.
+
+- `references/implementation-gotchas.md` — emergent behavior of the current Rust
+  implementation (not in any RFC): silent `FlowControlConfig` no-ops, fixed-size
+  packet wire-format traps, the stalled-write-pump OOM path, and the SURB
+  balancer / return-path gotchas with their metric signatures. Read this when a
+  live node misbehaves in a way the protocol summary does not explain.
+- `references/benchmarking.md` — HOPR-specific benchmarking gotchas layered on
+  the general `performance` skill. Read this before profiling or benchmarking any
+  HOPR component (win prob, bounded channels, the mixer adapter, n-hop naming).
+
+## Cross-agent use
+
+This skill is portable: it runs on **Claude Code**, **Codex**, and **OpenCode**
+through the shared SKILL.md standard — nothing here is agent-specific. Its value
+is knowledge, not orchestration, so no special wiring is needed. For a
+multi-part investigation (e.g. correlating one node's ticket flow with its
+counterparties', or sweeping many nodes at once), delegate each sub-investigation
+to a subagent so findings come back independently; use your agent's own subagent
+mechanism (the `skill-creator` skill documents the per-agent mechanics).
+
+## Reference
+
+- **HOPR protocol summary** — full condensation of RFC-0001–0014 (packet layer,
+  Proof of Relay, tickets, mixing, application/session layers,
+  discovery/probing/path-finding, PIX, economic reward system). Fetched on demand
+  from the upstream permalink (see [Fetching the summary](#fetching-the-summary));
+  the RFCs themselves are the ultimate authority.

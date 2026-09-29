@@ -1,0 +1,22 @@
+{
+  "name": "hopr-marketplace",
+  "owner": {
+    "name": "HOPR",
+    "url": "https://hoprnet.org"
+  },
+  "metadata": {
+    "description": "Claude Code plugin marketplace for HOPR agent skills.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "hopr-concepts",
+      "description": "HOPR protocol knowledge aid — loads ground-truth concepts (RFC-0001–0014) for correct network debugging.",
+      "source": "./",
+      "skills": ["./tools/hopr-concepts"],
+      "metadata": {
+        "version": "1.2.0"
+      }
+    }
+  ]
+}
