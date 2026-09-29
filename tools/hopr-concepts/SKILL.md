@@ -1,5 +1,5 @@
 ---
-name: hopr-debug
+name: hopr-concepts
 description: >
   HOPR mixnet debugging aid. Loads ground-truth HOPR protocol knowledge
   (RFC-0001–0014: SPHINX packets, Proof of Relay, tickets and incentives,
@@ -17,7 +17,7 @@ description: >
   this is HOPR protocol and node debugging only.
 ---
 
-# HOPR Debug — protocol knowledge aid for network debugging
+# HOPR Concepts — protocol knowledge aid for network debugging
 
 This skill is an **aid for the debugger, not a debugger**. It supplies the
 side knowledge you need to _see and interpret_ what is happening inside a HOPR
