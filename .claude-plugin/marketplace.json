@@ -19,10 +19,10 @@
       }
     },
     {
-      "name": "hopr-release-cascade",
+      "name": "hopr-release",
       "description": "Propagate a Rust fix through the HOPR multi-repo release cascade: repin hoprnet crates across hoprd/edge-client/gnosis_vpn, flip feature-branch pins to release branches to published versions, and fan out across parallel release lines.",
       "source": "./",
-      "skills": ["./tools/hopr-release-cascade"],
+      "skills": ["./tools/hopr-release"],
       "metadata": {
         "version": "0.1.0"
       }

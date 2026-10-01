@@ -9,16 +9,18 @@ reasoning about HOPR grounded in how the network actually works.
 | Plugin | What it does |
 | ------ | ------------ |
 | `hopr-concepts` | HOPR protocol knowledge aid. Loads ground-truth concepts from RFC-0001–0014 (SPHINX packets, Proof of Relay, tickets and incentives, mixing, sessions, path-finding, PIX) plus Rust-implementation gotchas, so network debugging is correct rather than plausible-but-wrong. |
+| `hopr-release` | Propagate a Rust fix through the HOPR multi-repo release cascade: repin hoprnet crates across hoprd/edge-client/gnosis_vpn, flip feature-branch pins to release branches to published versions, and fan out across parallel release lines. |
 
 ## Install
 
 ```
 /plugin marketplace add hoprnet/skills
 /plugin install hopr-concepts@hopr-marketplace
+/plugin install hopr-release@hopr-marketplace
 ```
 
-Then invoke a skill with `/hopr-concepts`, or let it trigger on HOPR debugging
-work automatically.
+Then invoke a skill with `/hopr-concepts` or `/hopr-release`, or let it trigger
+on HOPR work automatically.
 
 ## Local development
 

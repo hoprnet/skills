@@ -1,5 +1,5 @@
 ---
-name: hopr-release-cascade
+name: hopr-release
 description: >
   Propagate a Rust fix through the HOPR multi-repo release cascade. Use whenever a
   change in a hoprnet crate (hopr-lib, hopr-utilities, hopr-utils-session,
