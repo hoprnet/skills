@@ -1,20 +1,20 @@
 ---
 name: hopr-concepts
 description: >
-  HOPR mixnet debugging aid. Loads ground-truth HOPR protocol knowledge
-  (RFC-0001–0014: SPHINX packets, Proof of Relay, tickets and incentives,
-  mixing, sessions, path-finding, PIX) plus hard-won Rust-implementation
-  gotchas, so reasoning about a live network is correct rather than
-  plausible-but-wrong. Use whenever debugging or operating over a HOPR network —
-  a node is not relaying, tickets are not winning or redeeming, a payment channel
-  will not open or close, packets are dropped, a session will not establish,
-  path-finding returns no route, mixing latency looks wrong, SURBs run out, or
-  Exit/PIX incentives misbehave. Trigger on "debug HOPR", "HOPR node", "hoprd",
-  "channel graph", "relay", "ticket", "Proof of Relay", "PoR", "SURB", "why is
-  my node not earning", "path not found", or mentions of hops, the channel graph,
-  or the HOPR reward/Cover-Traffic system. Do not use for generic non-HOPR
-  networking, other mixnets or VPNs, or HOPR token price/trading questions —
-  this is HOPR protocol and node debugging only.
+  Ground-truth knowledge for any work on HOPR, the mixnet used as a
+  privacy-preserving transport. Loads the protocol facts (RFC-0001–0014) plus
+  Rust-implementation gotchas, so reasoning about the protocol or a live network
+  is correct rather than plausible-but-wrong. Invoke
+  it EVERY TIME you need a HOPR concept, not only when something is broken:
+  writing or modifying HOPR code; reasoning about or explaining how the
+  transport, mixing, incentives, relaying, or path-finding work; reviewing a
+  design, RFC, or PR; or debugging a running network (nodes not relaying,
+  tickets not winning or redeeming, channels stuck, packets dropped, sessions
+  failing, no route found, SURBs exhausted, Exit/PIX incentives misbehaving).
+  Trigger on any mention of HOPR as a transport or mixnet, hoprd, the channel
+  graph, relays, hops, tickets, Proof of Relay/PoR, SPHINX, SURBs, sessions,
+  path-finding, PIX, Cover Traffic, or the HOPR reward system. Not for generic
+  non-HOPR networking, other mixnets or VPNs, or HOPR token price/trading.
 ---
 
 # HOPR Concepts — protocol knowledge aid for network debugging
