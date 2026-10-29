@@ -24,8 +24,11 @@ are cloned there (partial clone). Default is a DRY RUN: it prints the operations
 triggers nothing. --execute runs the ready release workflows with `gh workflow run`, all
 at the same time, after one `yes` (--yes skips it). It continues for a repo once its
 versions show on crates.io; later jobs of the run do not matter. A crate is released unless
-its head version is already on crates.io. One run releases only the crates in its first
-plan, because CI bumps each head after a release. --max-releases N caps the repos released.
+its head version is already on crates.io, or the head is only CI's post-release bump (set by
+a `ci: Bump to version X` commit, with nothing but Cargo.toml and Cargo.lock changed since).
+Such a bump head is listed in `bump_heads`, not released, and the newest published version
+stands in for it. One run also releases only the crates in its first plan.
+--max-releases N caps the repos released.
 
 A step is blocked while a repo's own requirements do not admit the versions released below
 it. Repin that repo first. A release publishes to crates.io and cannot be undone.
@@ -56,6 +59,7 @@ turn the list into a workflow, or run the releases. Fields:
                    repin: edits (file, line, key, current, required), version_bumps, then
                    final_repin: edits (also git-pin swaps), lock_updates (crate, locked, target), then
                    pin_swap: blocked_reason (a git pin with no published version yet)
+  bump_heads       heads that are only CI's version bump: crate, head, newest published
   pull_requests    draft PRs opened or found by --execute / --execute-no-release
                    (operation, repo, base, branch, url, state opened | exists)
   ready_operations ids that can run now (no unfinished dependency)
@@ -209,6 +213,24 @@ def packages(ms):
 def published_versions(crate):
     """Non-yanked versions of a crate on crates.io."""
     return [v["num"] for v in (crates_io(crate) or {"versions": []})["versions"] if not v["yanked"]]
+
+
+def find_bump(commits, version):
+    """Newest commit hash whose subject is CI's `ci: Bump to version <version>`. commits: (hash, subject), newest first."""
+    want = f"ci: Bump to version {version}"
+    return next((h for h, subject in commits if subject.strip() == want), None)
+
+
+def only_cargo_files(files):
+    return all(Path(f).name in ("Cargo.toml", "Cargo.lock") for f in files)
+
+
+def bump_only(repo, ref, version):
+    """True when `version` is only CI's post-release bump: set by a `ci: Bump to version` commit, with nothing
+    but Cargo.toml and Cargo.lock changed since. Such a head has no new code and is not a release."""
+    rows = git(repo, "log", "--format=%H%x09%s", "-n", "300", ref).splitlines()
+    h = find_bump([tuple(r.split("\t", 1)) for r in rows if "\t" in r], version)
+    return bool(h) and only_cargo_files(git(repo, "diff", "--name-only", h, ref).split())
 
 
 def pick_latest_compatible(versions, head):
@@ -413,15 +435,17 @@ def build_plan(start_repo, start_branch, planned=None):
     target = {c: v for s in plan.values() for c, v in s["head"].items()}
     target.update({f["crate"]: f["version"] for f in fixed})
     steps = [plan[k] for k in order]
-    releasing = set()
+    releasing, bump_heads = set(), []
     for k in order:
         s = plan[k]
         s["requires"] = sorted({e["crate"] for e in s["entries"] if e["crate"] in crate_step and crate_step[e["crate"]] != k})
         s["todo"] = {c: v for c, v in s["head"].items() if not is_published(c, v)}
-        if planned is not None:
-            for c in [c for c in s["todo"] if c not in planned]:
-                del s["todo"][c]
-                target[c] = pick_latest_compatible(published_versions(c), s["head"][c]) or s["head"][c]
+        # a head that is only CI's post-release bump (or, in a later plan of one run, any head outside the first
+        # plan) is not a release; the newest published version stands in for it
+        for c in [c for c, v in s["todo"].items()
+                  if (planned is not None and c not in planned) or bump_only(s["repo"], f"origin/{s['branch']}", v)]:
+            bump_heads.append(dict(crate=c, head=s["todo"].pop(c), published=pick_latest_compatible(published_versions(c), s["head"][c])))
+            target[c] = bump_heads[-1]["published"] or s["head"][c]
         s["gaps"] = gaps(s["entries"], target, owned)
         # a repo whose head is published but whose requirements lag must be bumped and released again
         s["republish"] = bool(s["gaps"]) and not s["todo"]
@@ -439,7 +463,7 @@ def build_plan(start_repo, start_branch, planned=None):
             swap_to = None
         pins.append(dict(pin, line=line_of(start_repo, f"origin/{start_branch}", pin["file"], pin["key"]), locked=locked, target=swap_to))
     return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned), pins=pins,
-                patched=patch_pins(start_ms),
+                patched=patch_pins(start_ms), bump_heads=bump_heads,
                 repin=gaps(start_entries, target, owned), locked={c: v for c, (_, v) in owned.items()}, target=target)
 
 
@@ -696,7 +720,7 @@ def status(plan):
                 repos_to_update=repos_to_update, crates_to_change=crates_to_change, operations=ops,
                 ready_operations=[o["id"] for o in ready],
                 layers=[[o["id"] for o in ops if o["layer"] == n] for n in sorted({o["layer"] for o in ops})],
-                pull_requests=[],
+                pull_requests=[], bump_heads=plan.get("bump_heads", []),
                 next=nxt, conditions=conditions,
                 fixed_inputs=fixed, git_pinned_out_of_scope=plan["pinned"], warnings=warnings,
                 resume=resume if state != "complete" else None)
@@ -705,7 +729,7 @@ def status(plan):
 def error_report(start, msg, state="error"):
     return dict(schema=SCHEMA, generated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                 start=dict(repo=start[0], branch=start[1]), state=state, summary=msg, repos_to_update=[],
-                crates_to_change=[], operations=[], ready_operations=[], layers=[], pull_requests=[], next=dict(kind="none"), conditions=[],
+                crates_to_change=[], operations=[], ready_operations=[], layers=[], pull_requests=[], bump_heads=[], next=dict(kind="none"), conditions=[],
                 fixed_inputs=[], git_pinned_out_of_scope=[], warnings=[], resume=resume_command(start))
 
 
@@ -853,6 +877,7 @@ def render_plain(r):
         out += [f"condition {c['id']}: {c['description']}", f"  verify: {c['verify']}"]
     for f in r["fixed_inputs"]:
         out.append(f"fixed input: {f['crate']} {f['version']} ({f.get('reason', '')}, on crates.io: {f['on_crates_io']})")
+    out += [f"bump head, not released: {b['crate']} {b['head']} (CI bump after {b['published']})" for b in r.get("bump_heads", [])]
     if r["git_pinned_out_of_scope"]:
         out.append("git-pinned: " + ", ".join(r["git_pinned_out_of_scope"]))
     out += [f"warning: {w}" for w in r["warnings"]]

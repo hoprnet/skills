@@ -85,17 +85,19 @@ rendering.
    versions released below it needs a `repin` PR (file, line, current, required) before
    its release. A repo whose head is already published is bumped in that PR and released
    again.
-5. **Release.** A crate is released unless its head version is already on crates.io; the
-   script skips nothing else. A release waits only for what it needs: a repin, or an
+5. **Release.** A crate is released unless its head version is already on crates.io, or the
+   head is only CI's post-release bump: set by a `ci: Bump to version X` commit with
+   nothing but `Cargo.toml` and `Cargo.lock` changed since. Such a head has no new code. It
+   is listed in `bump_heads`, not released, and the newest published version stands in for
+   it, so lock updates target versions that exist. A head set by a real change, or followed
+   by one, is a release. A release waits only for what it needs: a repin, or an
    upstream crate whose new version its requirement needs because no published version
    meets it. Everything else is ready together. `--execute` asks `yes` once, triggers all
    ready releases at the same time, and continues for each repo once its versions show on
    crates.io. The run's `Publish library` step is only an early failure signal: crates.io
    decides, and later jobs of the run (for example `Close release`) do not matter. A repo
    with no release workflow is a manual step.
-   - A run releases only the crates in its first plan. The release workflow bumps the head
-     version after each release (`ci: Bump to version X`), and those new heads are not
-     released in the same run.
+   - A run also releases only the crates in its first plan.
    - `--max-releases N` caps how many repos one run releases.
 6. **Repin the start repo** last, with the same kind of PR. The final operation also
    updates lock entries that pin older versions than the released ones, and swaps git-ref
@@ -128,6 +130,7 @@ or run the releases itself.
 | `layers` | Operation ids per layer. A layer is 1 + the highest layer among an operation's `depends_on`. Operations in one layer are independent; each also carries `layer` and `concurrency_group` (`layer-N`). |
 | `conditions` | What must hold before the cascade continues, each with a `verify` command. |
 | `resume` | The command to run once the conditions hold. `null` when complete. |
+| `bump_heads` | Heads that are only CI's version bump after a release: crate, head, newest published. Not released. |
 | `pull_requests` | Draft PRs opened or found by `--execute` and `--execute-no-release`: operation, repo, base, branch, url, state (`opened` or `exists`). |
 | `fixed_inputs`, `git_pinned_out_of_scope`, `warnings` | Inputs only checked on crates.io, org crates pinned by git (repin, not released), and problems such as a yanked fixed input. |
 

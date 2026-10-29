@@ -476,6 +476,79 @@ class Resume(unittest.TestCase):
         self.assertTrue(cmd.endswith("--execute"))
 
 
+class BumpOnly(unittest.TestCase):
+    commits = [("c4", "fix(ci): sync Cargo.lock with bumped crate versions (#67)"), ("c3", "ci: Bump to version 0.36.1"),
+               ("c2", "feat: report the health of each subscription (#60)"), ("c1", "ci: Bump to version 0.36.0")]
+
+    def test_the_bump_commit_for_a_version_is_found_by_its_subject(self):
+        self.assertEqual(rc.find_bump(self.commits, "0.36.1"), "c3")
+        self.assertEqual(rc.find_bump(self.commits, "0.36.0"), "c1")
+
+    def test_a_version_set_by_a_real_change_has_no_bump_commit(self):
+        self.assertIsNone(rc.find_bump(self.commits, "0.37.0"))
+
+    def test_only_cargo_files_count_as_a_bump(self):
+        self.assertTrue(rc.only_cargo_files(["Cargo.toml", "Cargo.lock", "ethereum/bindings/Cargo.toml"]))
+        self.assertFalse(rc.only_cargo_files(["Cargo.lock", "src/lib.rs"]))
+        self.assertTrue(rc.only_cargo_files([]))
+
+
+class BumpOnlyGit(unittest.TestCase):
+    """The git side against a temporary repository."""
+
+    def setUp(self):
+        import os, subprocess, tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        self.sh = lambda *a: subprocess.run(a, cwd=self.tmp / "r", env=self.env, check=True, capture_output=True, text=True)
+        (self.tmp / "r").mkdir()
+        self.sh("git", "init", "-q", "-b", "main")
+        self.saved = rc.WORKSPACE
+        rc.WORKSPACE = self.tmp
+        self.commit("src/lib.rs", "a", "feat: something")
+
+    def tearDown(self):
+        import shutil
+        rc.WORKSPACE = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def commit(self, path, text, subject):
+        f = self.tmp / "r" / path
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text + str(len(self.sh("git", "log", "--oneline").stdout) if (self.tmp / "r/.git/refs/heads/main").exists() else 0))
+        self.sh("git", "add", "-A")
+        self.sh("git", "commit", "-q", "-m", subject)
+
+    def ref(self):
+        self.sh("git", "update-ref", "refs/remotes/origin/main", "HEAD")
+        return "origin/main"
+
+    def test_head_set_by_a_ci_bump_with_nothing_after_it_is_bump_only(self):
+        self.commit("Cargo.toml", "v", "ci: Bump to version 1.0.1")
+        self.assertTrue(rc.bump_only("r", self.ref(), "1.0.1"))
+
+    def test_a_lock_only_commit_after_the_bump_is_still_bump_only(self):
+        self.commit("Cargo.toml", "v", "ci: Bump to version 1.0.1")
+        self.commit("Cargo.lock", "l", "fix(ci): sync Cargo.lock")
+        self.assertTrue(rc.bump_only("r", self.ref(), "1.0.1"))
+
+    def test_a_source_change_after_the_bump_is_real_work(self):
+        self.commit("Cargo.toml", "v", "ci: Bump to version 1.0.1")
+        self.commit("src/lib.rs", "new", "fix: something real")
+        self.assertFalse(rc.bump_only("r", self.ref(), "1.0.1"))
+
+    def test_a_version_not_set_by_a_ci_bump_is_not_bump_only(self):
+        self.commit("Cargo.toml", "v", "feat: add a thing and bump to 1.1.0")
+        self.assertFalse(rc.bump_only("r", self.ref(), "1.1.0"))
+
+
+class BumpHeads(unittest.TestCase):
+    def test_report_lists_the_bump_heads_that_were_skipped(self):
+        r = rc.status(dict(plan([]), bump_heads=[dict(crate="hopr-types", head="2.3.3", published="2.3.2")]))
+        self.assertEqual(r["bump_heads"], [dict(crate="hopr-types", head="2.3.3", published="2.3.2")])
+        self.assertIn("hopr-types 2.3.3", rc.render(r, "plain"))
+
+
 class Layers(unittest.TestCase):
     def test_independent_operations_share_a_layer_and_dependents_come_after(self):
         a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
