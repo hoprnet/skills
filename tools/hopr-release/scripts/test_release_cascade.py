@@ -1434,6 +1434,132 @@ class ReExports(unittest.TestCase):
         self.assertTrue(rc.reexports_dep("r", "origin/main", "hopr-utilities", "hopr-utils"))
 
 
+class TokenSources(unittest.TestCase):
+    def source(self, **kw):
+        calls = kw.pop("calls", [])
+        outputs = kw.pop("outputs", [(0, "tok-1\n", "")])
+        now = kw.pop("now", [0.0])
+
+        def run_cmd(cmd):
+            calls.append(cmd)
+            return outputs[min(len(calls) - 1, len(outputs) - 1)]
+        return rc.TokenSource(clock=lambda: now[0], run_cmd=run_cmd, **kw), calls, now
+
+    def test_the_env_token_wins_and_the_command_is_not_run(self):
+        src, calls, _ = self.source(env_token="env-tok", cmd="print-token")
+        self.assertEqual(src.get(), "env-tok")
+        self.assertEqual(calls, [])
+
+    def test_the_command_output_is_the_token_and_is_reused_until_it_is_old(self):
+        src, calls, now = self.source(cmd="print-token", outputs=[(0, "tok-1\n", ""), (0, "tok-2\n", "")])
+        self.assertEqual((src.get(), src.get()), ("tok-1", "tok-1"))
+        self.assertEqual(len(calls), 1)
+        now[0] += 49 * 60
+        self.assertEqual(src.get(), "tok-1")
+        now[0] += 2 * 60                       # past 50 minutes: installation tokens last an hour
+        self.assertEqual(src.get(), "tok-2")
+        self.assertEqual(len(calls), 2)
+
+    def test_refresh_after_a_401_asks_the_command_again_and_drops_the_env_token(self):
+        src, calls, _ = self.source(env_token="old", cmd="print-token", outputs=[(0, "new\n", "")])
+        self.assertEqual(src.get(), "old")
+        self.assertEqual(src.refresh(), "new")
+        self.assertEqual(src.get(), "new")
+
+    def test_refresh_with_only_an_env_token_says_what_is_missing(self):
+        src, _, _ = self.source(env_token="old")
+        with self.assertRaises(rc.Stop) as e:
+            src.refresh()
+        self.assertIn("--token-cmd", str(e.exception))
+
+    def test_a_token_file_is_read_every_time(self):
+        import tempfile
+        f = Path(tempfile.mkdtemp()) / "token"
+        f.write_text("file-1\n")
+        src = rc.TokenSource(file=str(f))
+        self.assertEqual(src.get(), "file-1")
+        f.write_text("file-2\n")
+        self.assertEqual(src.get(), "file-2")
+        f.write_text("\n")
+        with self.assertRaises(rc.Stop):
+            src.get()
+
+    def test_a_failing_command_reports_its_stderr_and_never_its_output(self):
+        src, _, _ = self.source(cmd="print-token", outputs=[(3, "SECRET-OUTPUT", "helper: not logged in\nmore")])
+        with self.assertRaises(rc.Stop) as e:
+            src.get()
+        self.assertIn("exit 3", str(e.exception))
+        self.assertIn("helper: not logged in", str(e.exception))
+        self.assertNotIn("SECRET-OUTPUT", str(e.exception))
+
+    def test_no_token_or_more_than_one_line_is_an_error(self):
+        for out in ("", "\n", "line one\nline two\n"):
+            src, _, _ = self.source(cmd="print-token", outputs=[(0, out, "")])
+            with self.assertRaises(rc.Stop):
+                src.get()
+
+    def test_no_source_at_all_names_every_option(self):
+        with self.assertRaises(rc.Stop) as e:
+            rc.TokenSource().get()
+        for name in ("GH_TOKEN", "--token-cmd", "--token-file"):
+            self.assertIn(name, str(e.exception))
+
+
+class ApiForgeTokens(unittest.TestCase):
+    def test_a_401_refreshes_the_token_and_retries_once(self):
+        answers = iter([(401, {"message": "Bad credentials"}), (200, {"workflow_runs": [{"id": 5}]})])
+        calls = []
+
+        def http(method, url, body=None):
+            calls.append(url)
+            return next(answers)
+        src = rc.TokenSource(env_token="old", cmd="print-token", run_cmd=lambda c: (0, "new\n", ""))
+        self.assertEqual(rc.ApiForge(src, http).run_ids("r", "release.yaml", "main"), {5})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(src.get(), "new")
+
+    def test_a_401_with_nothing_to_refresh_it_with_ends_the_run_with_a_clear_message(self):
+        http = FakeHttp({("GET", "/runs"): (401, {"message": "Bad credentials"})})
+        with self.assertRaises(rc.Stop) as e:
+            rc.ApiForge(rc.TokenSource(env_token="old"), http).run_ids("r", "w", "main")
+        self.assertIn("--token-cmd", str(e.exception))
+
+    def test_git_gets_the_current_token_each_time(self):
+        import base64
+        out = iter([(0, "t1\n", ""), (0, "t2\n", "")])
+        src = rc.TokenSource(cmd="print-token", run_cmd=lambda c: next(out))
+        forge = rc.ApiForge(src, FakeHttp({}))
+
+        def token_in(env):
+            return base64.b64decode(env["GIT_CONFIG_VALUE_0"].split()[-1]).decode().split(":", 1)[1]
+        self.assertEqual(token_in(forge.git_env()), "t1")
+        src.refresh()
+        self.assertEqual(token_in(forge.git_env()), "t2")
+
+
+class ForgeChoiceWithTokenSources(unittest.TestCase):
+    def test_an_explicit_token_command_means_the_api_even_when_gh_is_there(self):
+        self.assertEqual(rc.choose_forge(which=lambda n: "/bin/gh", gh_ok=lambda: True, env={}, token_cmd="print-token"), "api")
+        self.assertEqual(rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={}, token_file="/run/token"), "api")
+
+    def test_forcing_gh_still_needs_gh(self):
+        with self.assertRaises(rc.Stop):
+            rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={}, force="gh", token_cmd="print-token")
+
+    def test_the_error_without_any_access_names_the_new_options(self):
+        with self.assertRaises(rc.Stop) as e:
+            rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={})
+        self.assertIn("--token-cmd", str(e.exception))
+
+    def test_resume_keeps_the_token_options(self):
+        from types import SimpleNamespace
+        a = SimpleNamespace(workspace=None, forge="auto", output="json", release_type="patch", max_releases=None,
+                            token_cmd="printf 'x' | cat", token_file="/run/token")
+        flags = rc.resume_flags(a)
+        self.assertIn("--token-cmd 'printf '\"'\"'x'\"'\"' | cat'", flags)
+        self.assertIn("--token-file /run/token", flags)
+
+
 class Layers(unittest.TestCase):
     def test_independent_operations_share_a_layer_and_dependents_come_after(self):
         a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
