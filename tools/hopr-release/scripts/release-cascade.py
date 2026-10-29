@@ -102,7 +102,7 @@ turn the list into a workflow, or run the releases. Fields:
 Exit code: 0 for every state except error (2).
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import argparse, base64, datetime, hashlib, json, shlex, os, re, shutil, subprocess, sys, threading, time, tomllib, urllib.parse, urllib.request, urllib.error
+import argparse, base64, datetime, hashlib, json, shlex, os, re, shutil, signal, subprocess, sys, threading, time, tomllib, urllib.parse, urllib.request, urllib.error
 from pathlib import Path
 
 ORG = "hoprnet"
@@ -727,17 +727,25 @@ def gaps(entries, target, owned):
 
 def choose_forge(which=shutil.which, gh_ok=None, env=os.environ, force=None, token_cmd=None, token_file=None):
     """'gh' when gh is installed and logged in, else 'api' when a token source is given: GH_TOKEN or GITHUB_TOKEN,
-    --token-cmd or --token-file. An explicit --token-cmd or --token-file means the API even when gh is there."""
-    gh_ok = gh_ok or (lambda: run("gh", "auth", "status", check=False)[0] == 0)
-    gh_ready = bool(which("gh")) and gh_ok()
+    --token-cmd or --token-file. An explicit --token-cmd or --token-file means the API even when gh is there, and
+    cannot be combined with --forge gh."""
+    explicit = bool(token_cmd or token_file)
     token = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN") or token_cmd or token_file
+
+    def gh_ready():
+        try:  # a gh that is on PATH but cannot start counts as not ready
+            return bool(which("gh")) and (gh_ok or (lambda: run("gh", "auth", "status", check=False)[0] == 0))()
+        except OSError:
+            return False
     if force == "gh":
-        return "gh" if gh_ready else die("--forge gh: gh is missing or not logged in (gh auth login)")
+        if explicit:
+            die("--forge gh cannot use --token-cmd or --token-file; drop one of them")
+        return "gh" if gh_ready() else die("--forge gh: gh is missing or not logged in (gh auth login)")
     if force == "api":
         return "api" if token else die("--forge api: set GH_TOKEN or GITHUB_TOKEN, or pass --token-cmd or --token-file")
-    if token_cmd or token_file:
+    if explicit:
         return "api"
-    if gh_ready:
+    if gh_ready():
         return "gh"
     if token:
         return "api"
@@ -782,16 +790,30 @@ class GhForge:
         return out.strip().splitlines()[-1]
 
 
+def run_token_command(cmd, timeout=30):
+    """Run the --token-cmd shell command with no input and a time limit. -> (exit code, stdout, stderr)."""
+    p = subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)  # the shell and everything it started
+        p.communicate()
+        die(f"--token-cmd did not finish within {timeout:g} seconds")
+    return p.returncode, out, err
+
+
 class TokenSource:
     """Where the GitHub token comes from, in this order: GH_TOKEN or GITHUB_TOKEN, the output of --token-cmd (a shell command
     that prints one token; run again when the token is 50 minutes old, as installation tokens last an hour, or after a
     401), the content of --token-file (read every time). An env token that gets a 401 is dropped for the others."""
 
-    def __init__(self, env_token=None, cmd=None, file=None, max_age=50 * 60, clock=time.monotonic, run_cmd=None):
+    def __init__(self, env_token=None, cmd=None, file=None, max_age=50 * 60, clock=time.monotonic, run_cmd=None,
+                 read_file=None, sleep=time.sleep):
         self.env_token, self.env_ok, self.cmd, self.file = env_token, bool(env_token), cmd, file
-        self.max_age, self.clock = max_age, clock
-        self.run_cmd = run_cmd or (lambda c: (lambda r: (r.returncode, r.stdout, r.stderr))(
-            subprocess.run(c, shell=True, capture_output=True, text=True)))
+        self.max_age, self.clock, self.sleep = max_age, clock, sleep
+        self.run_cmd = run_cmd or run_token_command
+        self.read_file = read_file or (lambda path: Path(path).read_text())
         self.cached, self.fetched = None, None
 
     def can_refresh(self):
@@ -814,10 +836,16 @@ class TokenSource:
                 self.cached, self.fetched = self._token(out, "--token-cmd"), self.clock()
             return self.cached
         if self.file:
-            try:
-                return self._token(Path(self.file).read_text(), f"--token-file {self.file}")
-            except OSError as e:
-                die(f"--token-file {self.file}: {e.strerror or e}")
+            for attempt in range(3):  # a file being rewritten reads empty for a moment
+                try:
+                    text = self.read_file(self.file)
+                except OSError as e:
+                    die(f"--token-file {self.file}: {e.strerror or e}")
+                if len([x for x in text.splitlines() if x.strip()]) == 1:
+                    break
+                if attempt < 2:
+                    self.sleep(0.2)
+            return self._token(text, f"--token-file {self.file}")
         return die("no GitHub token: set GH_TOKEN or GITHUB_TOKEN, or pass --token-cmd or --token-file")
 
     def refresh(self):
@@ -999,7 +1027,7 @@ def resume_flags(a):
     if getattr(a, "token_cmd", None):
         parts += ["--token-cmd", a.token_cmd]
     if getattr(a, "token_file", None):
-        parts += ["--token-file", a.token_file]
+        parts += ["--token-file", os.path.abspath(a.token_file)]
     return shlex.join(parts)
 
 
@@ -1547,8 +1575,9 @@ def main():
                     help="auto: gh when installed and logged in, else the REST API with GH_TOKEN or GITHUB_TOKEN")
     ap.add_argument("--token-cmd", metavar="CMD",
                     help="a shell command that prints a GitHub token, for example a git credential helper; used after "
-                         "GH_TOKEN and GITHUB_TOKEN, run again after 50 minutes or a 401. Implies --forge api")
-    ap.add_argument("--token-file", metavar="PATH", help="a file that holds a GitHub token (read each time). Implies --forge api")
+                         "GH_TOKEN and GITHUB_TOKEN, run again after 50 minutes or a 401. Implies --forge api (an error "
+                         "with --forge gh). The resume command repeats it, so keep credentials out of the command")
+    ap.add_argument("--token-file", metavar="PATH", help="a file that holds a GitHub token (read each time). Implies --forge api (an error with --forge gh)")
     ap.add_argument("--workspace", type=Path, help="directory holding the repo clones (default: current directory)")
     ap.add_argument("--execute", action="store_true", help="trigger the release workflows")
     ap.add_argument("--execute-no-release", action="store_true",

@@ -77,7 +77,9 @@ needs Python 3.11 or newer and no packages. A GitHub App needs these permissions
 contents write (push), pull requests write, actions write (dispatch) and workflows (to push a
 workflow file). A dry run needs none.
 The token reaches git through an environment header; the script never puts it on a command
-line, writes it to a file, or prints it.
+line, writes it to a file, or prints it. The `resume` command repeats `--token-cmd`, so keep
+credentials out of that command: use a helper, or `--token-file`. The command has 30 seconds, gets
+no input, and `--forge gh` cannot be combined with either option.
 `-o json` (default) prints indented JSON, `-o mjson` the same on one line, `-o plain` a text
 rendering.
 

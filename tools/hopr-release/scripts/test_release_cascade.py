@@ -1567,6 +1567,56 @@ class ForgeChoiceWithTokenSources(unittest.TestCase):
         self.assertIn("--token-file /run/token", flags)
 
 
+class TokenCommandRobustness(unittest.TestCase):
+    def test_a_token_command_that_hangs_is_stopped(self):
+        import time
+        t0 = time.monotonic()
+        with self.assertRaises(rc.Stop) as e:
+            rc.run_token_command("sleep 5", timeout=0.3)
+        self.assertLess(time.monotonic() - t0, 3)
+        self.assertIn("did not finish", str(e.exception))
+
+    def test_a_token_command_gets_no_input_and_its_output_is_returned(self):
+        code, out, err = rc.run_token_command("cat >/dev/null; echo tok", timeout=5)  # cat would block on a terminal
+        self.assertEqual((code, out.strip()), (0, "tok"))
+
+    def test_an_empty_token_file_is_read_again_before_the_run_stops(self):
+        reads = iter(["", "", "tok-file\n"])
+        slept = []
+        src = rc.TokenSource(file="/run/token", read_file=lambda p: next(reads), sleep=slept.append)
+        self.assertEqual(src.get(), "tok-file")
+        self.assertEqual(len(slept), 2)
+
+    def test_a_token_file_that_stays_empty_still_stops_the_run(self):
+        src = rc.TokenSource(file="/run/token", read_file=lambda p: "", sleep=lambda d: None)
+        with self.assertRaises(rc.Stop):
+            src.get()
+
+    def test_a_gh_that_cannot_launch_does_not_block_a_token_source(self):
+        def broken(*a, **kw):
+            raise OSError("exec format error")
+        saved = rc.run
+        rc.run = broken
+        try:
+            self.assertEqual(rc.choose_forge(which=lambda n: "/bin/gh", env={}, token_cmd="print-token"), "api")
+            self.assertEqual(rc.choose_forge(which=lambda n: "/bin/gh", env={}, force="api", token_cmd="print-token"), "api")
+        finally:
+            rc.run = saved
+
+    def test_a_token_file_path_is_made_absolute_for_the_resume_command(self):
+        from types import SimpleNamespace
+        a = SimpleNamespace(workspace=None, forge="auto", output="json", release_type="patch", max_releases=None,
+                            token_cmd=None, token_file="rel/token")
+        import os
+        self.assertIn(f"--token-file {os.path.abspath('rel/token')}", rc.resume_flags(a))
+
+    def test_forge_gh_cannot_be_combined_with_a_token_option(self):
+        with self.assertRaises(rc.Stop) as e:
+            rc.choose_forge(which=lambda n: "/bin/gh", gh_ok=lambda: True, env={}, force="gh", token_cmd="print-token")
+        self.assertIn("--forge gh", str(e.exception))
+        self.assertIn("--token-cmd", str(e.exception))
+
+
 class Layers(unittest.TestCase):
     def test_independent_operations_share_a_layer_and_dependents_come_after(self):
         a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
