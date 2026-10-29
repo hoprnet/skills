@@ -9,7 +9,7 @@ reasoning about HOPR grounded in how the network actually works.
 | Plugin | What it does |
 | ------ | ------------ |
 | `hopr-concepts` | HOPR protocol knowledge aid. Loads ground-truth concepts from RFC-0001–0014 (SPHINX packets, Proof of Relay, tickets and incentives, mixing, sessions, path-finding, PIX) plus Rust-implementation gotchas, so network debugging is correct rather than plausible-but-wrong. |
-| `hopr-release` | Propagate a Rust fix through the HOPR multi-repo release cascade: repin hoprnet crates across hoprd/edge-client/gnosis_vpn, flip feature-branch pins to release branches to published versions, and fan out across parallel release lines. |
+| `hopr-release` | Propagate a Rust fix through the HOPR multi-repo release cascade: repin hoprnet crates across hoprd/edge-client/gnosis_vpn, flip feature-branch pins to release branches to published versions, and fan out across parallel release lines. Includes `release-cascade.py`, which plans and runs the crates.io release of the crates edge-client or hoprd depend on, and opens the repin PRs. |
 
 ## Install
 
