@@ -54,6 +54,15 @@ run), commit, push, and open a PR. It asks `yes` once (--yes skips it). It never
 merges and never releases. A branch name is derived from the edits, so a re-run finds the
 open PR and does not push a second one. --execute does the releases first, then the same.
 
+Bump level. A published crate whose requirements must be raised is bumped and released again.
+When the raised dependency moves to another compatibility line (its major, or its minor for
+0.x) and the crate re-exports it (`pub use`), the crate's own public API changes too, so the
+plan proposes the next breaking version (major, or minor for 0.x) instead of a patch, and marks
+the bump `level` and `reason`. Its dependents are then re-checked against that version, which
+carries the change up the tree. A bump is only a proposal: it is a version edit in the repin PR.
+A repo's re-export check covers all its crates, and a gap in a virtual workspace root counts
+for all of them, so a multi-crate repo may get more bumps than it needs; review the PR.
+
 Order rule. The start repo's PR is never opened while the PR of the repo it waits for (hoprnet)
 is open: its operation stays `pending` until that PR is merged. --wait-merge MINUTES makes the
 script wait for the PRs it opened (it never merges them), then re-plan at once and open the PRs
@@ -534,9 +543,9 @@ def build_plan(start_repo, start_branch, planned=None):
             target[c] = bump_heads[-1]["published"] or s["head"][c]
         s["gaps"] = gaps(s["entries"], target, owned)
         # a published crate whose requirements lag must be bumped and released again, also next to an unpublished sibling
-        s["bump_crates"] = crates_with_gaps([c for c in s["head"] if c not in s["todo"]], s["files"], s["gaps"])
+        pb = plan_bumps(s, all_versions, lambda dep, key: reexports_dep(s["repo"], f"origin/{s['branch']}", dep, key))
+        s["todo"], s["bump_crates"], s["bump_info"], s["release_versions"] = pb["todo"], pb["bump_crates"], pb["bump_info"], pb["release_versions"]
         s["republish"] = bool(s["bump_crates"])
-        s["release_versions"] = {**s["todo"], **{c: next_free_patch(all_versions(c), s["head"][c]) for c in s["bump_crates"]}}
         s["hard_requires"] = hard_needs(s["entries"], set(s["crates"]), releasing)
         releasing |= set(s["release_versions"])
         target.update(s["release_versions"])  # leaf first, so downstream repos see the version that will exist
@@ -579,6 +588,53 @@ def build_plan(start_repo, start_branch, planned=None):
                 upstream=upstream, git_updates=git_updates,
                 patched=patch_pins(start_ms), bump_heads=bump_heads,
                 repin=gaps(start_entries, target, owned), locked={c: v for c, (_, v) in owned.items()}, target=target)
+
+
+def breaking_line(v):
+    """The part of a version that Cargo treats as compatible: the major, or the minor for 0.x, or the patch for 0.0.x."""
+    a, b, c = (ver(v) + (0, 0, 0))[:3]
+    return (a,) if a > 0 else (0, b) if b > 0 else (0, 0, c)
+
+
+def is_breaking(req, want):
+    """True when `want` is on another compatibility line than the version `req` asks for."""
+    m = re.search(r"\d+(?:\.\d+){0,2}", req)
+    return bool(m) and breaking_line(m.group(0)) != breaking_line(want)
+
+
+def bump_breaking(v):
+    a, b, c = (ver(v) + (0, 0, 0))[:3]
+    return f"{a + 1}.0.0" if a > 0 else f"0.{b + 1}.0" if b > 0 else f"0.0.{c + 1}"
+
+
+def reexports_dep(repo, ref, dep, key):
+    """True when the crate has `pub use <dep>::...` (or `pub use <dep>;`) in a .rs file at `ref`. `key` is the dependency's name in Cargo.toml."""
+    idents = "|".join(sorted({dep.replace("-", "_"), key.replace("-", "_")}))
+    return run("git", "-C", str(WORKSPACE / repo), "grep", "-q", "-E", rf"pub use ({idents})(::|;| as )", ref, "--", "*.rs", check=False)[0] == 0
+
+
+def plan_bumps(s, versions_of, reexports):
+    """Which crates of a step need a new version, and which. A published crate with a stale requirement is bumped; a
+    crate that re-exports a dependency whose version moved to another compatibility line gets the next breaking
+    version (its public API changes with it), not a patch. -> {todo, bump_crates, release_versions, bump_info}"""
+    todo, info = dict(s["todo"]), {}
+    bump = set(crates_with_gaps([c for c in s["head"] if c not in todo], s["files"], s["gaps"]))
+    breaking = [g for g in s["gaps"] if is_breaking(g["req"], g["want"]) and reexports(g["crate"], g["key"])]
+    proposed = {}
+    for c in crates_with_gaps(sorted(s["head"]), s["files"], breaking):
+        head, latest = s["head"][c], max(versions_of(c), key=vkey, default=s["head"][c])
+        if c in todo and breaking_line(head) != breaking_line(latest):
+            continue  # the head is already on a newer line than anything published
+        bump.add(c)
+        todo.pop(c, None)
+        base = max(head, latest, key=vkey)
+        proposed[c] = bump_breaking(base)
+        deps = ", ".join(f"{g['crate']} {g['req']} -> {g['want']}" for g in breaking)
+        info[c] = dict(level="major" if breaking_line(base)[0] > 0 else "minor", reason=f"re-exports a dependency that moves line: {deps}")
+    release = {**todo, **{c: proposed.get(c) or next_free_patch(versions_of(c), s["head"][c]) for c in sorted(bump)}}
+    for c in bump:
+        info.setdefault(c, dict(level="patch", reason="requirements raised to the released versions"))
+    return dict(todo=todo, bump_crates=sorted(bump), release_versions=release, bump_info=info)
 
 
 def crates_with_gaps(crates, files, gap_list):
@@ -842,7 +898,8 @@ def operations(plan):
     for s in plan["steps"]:
         repin = None
         if s["gaps"]:
-            bumps = [dict(crate=c, file=s["files"][c], current=s["head"][c], suggested=s["release_versions"][c])
+            bumps = [dict(crate=c, file=s["files"][c], current=s["head"][c], suggested=s["release_versions"][c],
+                          **s.get("bump_info", {}).get(c, dict(level="patch", reason="requirements raised to the released versions")))
                      for c in s.get("bump_crates", [])]
             repin = new("repin", repo=s["repo"], branch=s["branch"], edits=edits(s["repo"], s["branch"], s["gaps"]),
                         version_bumps=bumps, depends_on=sorted({rel[g["crate"]] for g in s["gaps"] if g["crate"] in rel}),
@@ -1163,7 +1220,8 @@ def op_detail(o):
     if o["kind"].startswith("release"):
         return ", ".join(f"{c['name']} {c['version']}" for c in o["crates"])
     parts = [f"{e['key']} {e['current']} -> {e['required']}" for e in o.get("edits", [])]
-    parts += [f"bump {b['crate']} {b['current']} -> {b['suggested']}" for b in o.get("version_bumps", [])]
+    parts += [f"bump {b['crate']} {b['current']} -> {b['suggested']}"
+              + (f" ({b['level']}: {b['reason']})" if b.get("level", "patch") != "patch" else "") for b in o.get("version_bumps", [])]
     parts += [f"lock {u['crate']} {u['locked']} -> {u['target']}" for u in o.get("lock_updates", [])]
     parts += [f"git {c} {g['locked']} -> {g['head']} ({g['repo']}@{g['branch']})" for g in o.get("git_updates", []) for c in g["crates"]]
     return "; ".join(parts)

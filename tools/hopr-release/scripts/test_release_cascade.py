@@ -143,8 +143,10 @@ class Operations(unittest.TestCase):
                      requires=["hopr-types"])
         ops = rc.operations(plan([self.types, impls]))
         repin, release = ops[1], ops[2]
-        self.assertEqual(repin["version_bumps"], [dict(crate="hopr-chain-connector", file="Cargo.toml",
-                                                       current="0.28.0", suggested="0.28.1")])
+        bump = repin["version_bumps"][0]
+        self.assertEqual((bump["crate"], bump["file"], bump["current"], bump["suggested"], bump["level"]),
+                         ("hopr-chain-connector", "Cargo.toml", "0.28.0", "0.28.1", "patch"))
+        self.assertEqual(len(repin["version_bumps"]), 1)
         self.assertTrue(release["republish"])
         self.assertEqual(release["crates"], [dict(name="hopr-chain-connector", version="0.28.1")])
 
@@ -1052,6 +1054,104 @@ class SwapVersusRevision(unittest.TestCase):
         git = dict(self.git(), crates=["hopr-lib"], edits=self.git()["edits"][:1])
         ops = rc.operations(plan([], pins=[self.pin()], git_updates=[git]))
         self.assertEqual(ops[-1].get("git_updates"), [])
+
+
+class BreakingBumps(unittest.TestCase):
+    def test_a_gap_is_breaking_when_the_required_version_is_on_another_line(self):
+        self.assertTrue(rc.is_breaking("4.1.0", "5.0.0"))
+        self.assertTrue(rc.is_breaking("0.35.0", "0.36.1"))     # 0.x: the minor is the breaking digit
+        self.assertFalse(rc.is_breaking("=4.4.0", "4.4.1"))     # an exact pin moving within a line
+        self.assertFalse(rc.is_breaking("0.35.0", "0.35.4"))
+        self.assertFalse(rc.is_breaking("2.3.0", "2.4.0"))
+
+    def test_the_next_breaking_version(self):
+        self.assertEqual(rc.bump_breaking("4.4.1"), "5.0.0")
+        self.assertEqual(rc.bump_breaking("0.29.0"), "0.30.0")
+        self.assertEqual(rc.bump_breaking("0.0.3"), "0.0.4")
+
+    def gap(self, crate="hopr-types", req="4.1.0", want="5.0.0", file="Cargo.toml"):
+        return dict(file=file, table="dependencies", key=crate, crate=crate, req=req, want=want)
+
+    def versions(self, c):
+        return {"hopr-api": ["4.3.2", "4.4.0"]}.get(c, [])
+
+    def test_a_published_crate_that_re_exports_a_breaking_dependency_gets_a_major_bump(self):
+        s = step("hopr-api", {"hopr-api": "4.4.0"}, gaps=[self.gap()])
+        got = rc.plan_bumps(s, self.versions, reexports=lambda dep, key: dep == "hopr-types")
+        self.assertEqual(got["bump_crates"], ["hopr-api"])
+        self.assertEqual(got["release_versions"], {"hopr-api": "5.0.0"})
+        self.assertEqual(got["bump_info"]["hopr-api"]["level"], "major")
+        self.assertIn("hopr-types", got["bump_info"]["hopr-api"]["reason"])
+
+    def test_without_a_re_export_the_bump_stays_a_patch(self):
+        s = step("hopr-api", {"hopr-api": "4.4.0"}, gaps=[self.gap()])
+        got = rc.plan_bumps(s, self.versions, reexports=lambda dep, key: False)
+        self.assertEqual(got["release_versions"], {"hopr-api": "4.4.1"})
+        self.assertEqual(got["bump_info"]["hopr-api"]["level"], "patch")
+
+    def test_a_non_breaking_gap_stays_a_patch_even_with_a_re_export(self):
+        s = step("hopr-api", {"hopr-api": "4.4.0"}, gaps=[self.gap(req="=4.1.0", want="4.1.1")])
+        got = rc.plan_bumps(s, self.versions, reexports=lambda dep, key: True)
+        self.assertEqual(got["release_versions"], {"hopr-api": "4.4.1"})
+
+    def test_an_unpublished_head_on_the_published_line_is_raised_to_the_next_major(self):
+        s = step("hopr-api", {"hopr-api": "4.4.1"}, todo={"hopr-api": "4.4.1"}, gaps=[self.gap()])
+        got = rc.plan_bumps(s, self.versions, reexports=lambda dep, key: True)
+        self.assertEqual(got["release_versions"], {"hopr-api": "5.0.0"})
+        self.assertNotIn("hopr-api", got["todo"])          # no longer released as it is
+        self.assertEqual(got["bump_crates"], ["hopr-api"])
+
+    def test_a_head_already_on_a_newer_line_is_left_alone(self):
+        s = step("hopr-api", {"hopr-api": "5.0.0"}, todo={"hopr-api": "5.0.0"}, gaps=[self.gap()])
+        got = rc.plan_bumps(s, self.versions, reexports=lambda dep, key: True)
+        self.assertEqual(got["release_versions"], {"hopr-api": "5.0.0"})
+        self.assertEqual(got["bump_crates"], [])
+        self.assertEqual(got["todo"], {"hopr-api": "5.0.0"})
+
+    def test_the_bump_level_is_in_the_repin_operation(self):
+        types = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
+        api = step("hopr-api", {"hopr-api": "4.4.0"}, gaps=[self.gap()], requires=["hopr-types"])
+        api["bump_crates"], api["release_versions"] = ["hopr-api"], {"hopr-api": "5.0.0"}
+        api["bump_info"] = {"hopr-api": dict(level="major", reason="re-exports hopr-types, which moves 4.1.0 -> 5.0.0")}
+        ops = rc.operations(plan([types, api]))
+        repin = next(o for o in ops if o["kind"] == "repin")
+        self.assertEqual((repin["version_bumps"][0]["level"], repin["version_bumps"][0]["suggested"]), ("major", "5.0.0"))
+        self.assertIn("major", rc.op_detail(repin))
+
+
+class ReExports(unittest.TestCase):
+    def setUp(self):
+        import os, subprocess, tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        self.sh = lambda *a: subprocess.run(a, cwd=self.tmp / "r", env=env, check=True, capture_output=True, text=True)
+        (self.tmp / "r" / "src").mkdir(parents=True)
+        self.saved = rc.WORKSPACE
+        rc.WORKSPACE = self.tmp
+        self.sh("git", "init", "-q", "-b", "main")
+
+    def tearDown(self):
+        import shutil
+        rc.WORKSPACE = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def commit(self, text):
+        (self.tmp / "r" / "src" / "lib.rs").write_text(text)
+        self.sh("git", "add", "-A")
+        self.sh("git", "commit", "-q", "-m", "x")
+        self.sh("git", "update-ref", "refs/remotes/origin/main", "HEAD")
+
+    def test_pub_use_of_the_dependency_is_a_re_export(self):
+        self.commit("pub use hopr_types::{Address, Hash};\n")
+        self.assertTrue(rc.reexports_dep("r", "origin/main", "hopr-types", "hopr-types"))
+
+    def test_a_plain_use_is_not(self):
+        self.commit("use hopr_types::Address;\nfn f(_: Address) {}\n")
+        self.assertFalse(rc.reexports_dep("r", "origin/main", "hopr-types", "hopr-types"))
+
+    def test_a_renamed_dependency_is_found_by_its_key(self):
+        self.commit("pub use hopr_utils::thing;\n")
+        self.assertTrue(rc.reexports_dep("r", "origin/main", "hopr-utilities", "hopr-utils"))
 
 
 class Layers(unittest.TestCase):

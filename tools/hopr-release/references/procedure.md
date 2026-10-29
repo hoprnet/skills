@@ -115,13 +115,23 @@ rendering.
    unless its repo is a step of the cascade (hoprnet): then it is only a note in
    `git_pinned_swaps`, because that repo is never released and the final operation already
    moves the git revision. `[patch]` git entries are only warned about.
-8. **Order rule.** The start repo's PR is never opened while the PR of the repo it waits for
+8. **Bump level.** A published crate whose requirements must be raised is bumped and
+   released again, by a patch. When the raised dependency moves to another compatibility line
+   (major, or minor for 0.x) and the crate re-exports it (`pub use`), its own public API
+   changes too: the plan then proposes the next breaking version (major, or minor for 0.x) and
+   marks it with `level` and `reason` in `version_bumps`. Dependents are re-checked against that
+   version, so the change climbs the tree (on v5: `hopr-types` 5.0.0, then `hopr-api` 5.0.0, then
+   everything that requires `hopr-api` 4.x). The bump is a proposal: it is a version edit in the
+   repin PR, to be reviewed. The re-export check covers every crate of a repo, and a gap in a
+   virtual workspace root counts for all its crates, so a multi-crate repo can get more bumps
+   than it needs.
+9. **Order rule.** The start repo's PR is never opened while the PR of the repo it waits for
    (hoprnet) is open: that operation is `pending` until the PR is merged. `--wait-merge MINUTES`
    keeps the script running after it opens PRs: it waits for them to merge (it never merges),
    re-plans at once, and opens the PRs that were waiting. A PR closed without a merge, or the time
    limit, ends the run with state `paused`. A pin whose crate has a published version becomes a
    version requirement (one edit per line), and its git revision is no longer moved.
-9. **Open the PRs.** `--execute-no-release` opens a PR for each ready repin or final
+10. **Open the PRs.** `--execute-no-release` opens a PR for each ready repin or final
    operation, without releasing: it creates a branch in a git worktree
    (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
    (inside `nix develop` when the repo has a flake, so the hooks run), commits, pushes and
