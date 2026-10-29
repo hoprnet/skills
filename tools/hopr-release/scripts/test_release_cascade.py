@@ -868,34 +868,41 @@ class BumpHeads(unittest.TestCase):
 class NixCwd(unittest.TestCase):
     """`nix develop <path>` runs its shell hook in the current directory, so it must be the worktree."""
 
-    def test_commands_in_a_flake_worktree_run_with_the_worktree_as_cwd(self):
+    def worktree(self, flake=True):
         import tempfile
         wt = Path(tempfile.mkdtemp())
-        (wt / "flake.nix").write_text("{}")
-        calls = []
-        saved = rc.run
+        if flake:
+            (wt / "flake.nix").write_text("{}")
+        return wt
+
+    def run_with(self, nix_installed, fn):
+        calls, saved_run, saved_which = [], rc.run, rc.shutil.which
         rc.run = lambda *a, **kw: calls.append((a, kw)) or (0, "")
+        rc.shutil.which = lambda name: "/bin/nix" if (nix_installed and name == "nix") else None
         try:
-            rc.in_shell(wt, ["cargo metadata"])
-            rc.hooked_git(wt, "status")
+            fn()
         finally:
-            rc.run = saved
+            rc.run, rc.shutil.which = saved_run, saved_which
+        return calls
+
+    def test_commands_in_a_flake_worktree_run_with_the_worktree_as_cwd(self):
+        wt = self.worktree()
+        calls = self.run_with(True, lambda: (rc.in_shell(wt, ["cargo metadata"]), rc.hooked_git(wt, "status")))
         self.assertEqual(len(calls), 2)
         for args, kw in calls:
             self.assertEqual(args[0], "nix")
             self.assertEqual(kw.get("cwd"), wt)
 
+    def test_a_flake_worktree_without_nix_installed_runs_cargo_and_git_directly(self):
+        wt = self.worktree()
+        calls = self.run_with(False, lambda: (rc.in_shell(wt, ["cargo metadata"]), rc.hooked_git(wt, "status")))
+        self.assertEqual([a[0] for a, _ in calls], ["bash", "git"])
+        self.assertNotIn("nix", [x for a, _ in calls for x in a])
+
     def test_commands_without_a_flake_do_not_use_nix(self):
-        import tempfile
-        wt = Path(tempfile.mkdtemp())
-        calls = []
-        saved = rc.run
-        rc.run = lambda *a, **kw: calls.append(a) or (0, "")
-        try:
-            rc.hooked_git(wt, "status")
-        finally:
-            rc.run = saved
-        self.assertEqual(calls[0][0], "git")
+        wt = self.worktree(flake=False)
+        calls = self.run_with(True, lambda: rc.hooked_git(wt, "status"))
+        self.assertEqual(calls[0][0][0], "git")
 
 
 class Versions(unittest.TestCase):

@@ -53,8 +53,8 @@ entries are only warned about.
 
 --execute-no-release. For each ready repin or final operation: create a branch in a git
 worktree (<workspace>/<repo>-worktrees/), edit Cargo.toml (requirements, version bumps, git
-pins), refresh Cargo.lock (cargo, inside `nix develop` when the repo has a flake, so hooks
-run), commit, push, and open a PR. It asks `yes` once (--yes skips it). It never
+pins), refresh Cargo.lock (cargo, inside `nix develop` when the repo has a flake and nix is
+installed, so hooks run; otherwise cargo and git run directly), commit, push, and open a PR. It asks `yes` once (--yes skips it). It never
 merges and never releases. A branch name is derived from the edits, so a re-run finds the
 open PR and does not push a second one. --execute does the releases first, then the same.
 
@@ -1300,19 +1300,24 @@ def pr_text(op, start):
     return title, "\n".join(lines)
 
 
+def uses_nix(wt):
+    """The repo has a flake and nix is installed. Without nix (a VM that has only cargo and git) the commands run directly."""
+    return (Path(wt) / "flake.nix").exists() and bool(shutil.which("nix"))
+
+
 def in_shell(wt, cmds):
-    """Run commands in the worktree, inside `nix develop` when the repo has a flake (toolchain and hooks)."""
+    """Run commands in the worktree, inside `nix develop` when the repo has a flake and nix is installed (toolchain and hooks)."""
     script = f"cd {shlex.quote(str(wt))} && " + " && ".join(cmds)
-    if (Path(wt) / "flake.nix").exists():  # cwd matters: the shell hook (pre-commit setup) runs in the current directory
+    if uses_nix(wt):  # cwd matters: the shell hook (pre-commit setup) runs in the current directory
         run("nix", "develop", str(wt), "-c", "bash", "-c", script, cwd=wt)
     else:
         run("bash", "-c", script)
 
 
 def hooked_git(wt, *args):
-    """git in the worktree. With a flake it runs in `nix develop`, so the repo's pre-commit and pre-push hooks work."""
+    """git in the worktree. With a flake and nix it runs in `nix develop`, so the repo's pre-commit and pre-push hooks work."""
     cmd = ["git", "-C", str(wt), *args]
-    if (Path(wt) / "flake.nix").exists():
+    if uses_nix(wt):
         run("nix", "develop", str(wt), "-c", *cmd, cwd=wt)
     else:
         run(*cmd)

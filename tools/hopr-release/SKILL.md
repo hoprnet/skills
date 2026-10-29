@@ -67,7 +67,8 @@ final lock update. The detail is in "Publishing the crates.io crates, leaf to ro
 2. Log in with `gh`, or set `GH_TOKEN` or `GITHUB_TOKEN`, or pass `--token-cmd CMD` (a shell
    command that prints one token, for example a git credential helper on a VM without `gh`) or
    `--token-file PATH`. The last two mean the REST API even when `gh` is installed. A dry run
-   needs none of these. Python 3.11 or newer; no packages.
+   needs none of these. Python 3.11 or newer; no packages. To open PRs the machine also needs
+   `git` and `cargo` (or `nix`, which provides them).
 3. Choose the start repo and branch. The default branch is the v5 line
    (`edge-client@main`). `release/4.1` is the v4 line (`edge-client@release/4.1`).
 
