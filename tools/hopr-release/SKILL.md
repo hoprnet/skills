@@ -48,6 +48,10 @@ confirm the real commit you are pinning to against the branch it must live on.
 
 Full step-by-step with the repo and branch map: [references/procedure.md](references/procedure.md).
 
+To release the crates.io library crates leaf to root on the v4 and v5 lines, use
+`scripts/release-cascade.py` with the per-line graphs in `configs/`. It defaults to a
+dry run. See "Publishing the crates.io crates, leaf to root" in the procedure.
+
 ## Gotchas that bite every time
 
 Read [references/gotchas.md](references/gotchas.md) before repinning or publishing. The
