@@ -50,7 +50,9 @@ Full step-by-step with the repo and branch map: [references/procedure.md](refere
 
 To release the org crates a repo depends on, leaf to root, run
 `scripts/release-cascade.py --from <repo>@<branch>`. It defaults to a dry run and always
-prints one JSON status report (state, next action, conditions, resume command). See
+prints one JSON report: the full ordered list of operations (releases, repins, the final
+lock update), which repos and crates change, the next ready operation, the conditions to
+continue, and the resume command. Tests: `python3 -I scripts/test_release_cascade.py`. See
 "Publishing the crates.io crates, leaf to root" in the procedure.
 
 ## Gotchas that bite every time

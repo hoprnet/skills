@@ -1,0 +1,161 @@
+"""Tests for release-cascade.py: version admission and the operation list.
+
+  python3 -m unittest tools/hopr-release/scripts/test_release_cascade.py
+"""
+import importlib.util
+import unittest
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("rc", Path(__file__).with_name("release-cascade.py"))
+rc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rc)
+rc.line_of = lambda *a: 7  # no git in these tests
+
+
+def gap(crate, req, want, file="Cargo.toml"):
+    return dict(file=file, key=crate, crate=crate, req=req, want=want)
+
+
+def step(repo, crates, todo=None, gaps=(), requires=(), workflow="release.yaml", branch="main"):
+    head = dict(crates)
+    todo = dict(todo or {})
+    republish = bool(gaps) and not todo
+    return dict(repo=repo, branch=branch, workflow=workflow, crates=sorted(head), head=head, todo=todo,
+                gaps=list(gaps), requires=list(requires), files={c: "Cargo.toml" for c in head}, republish=republish,
+                release_versions=({c: rc.bump_patch(v) for c, v in head.items()} if republish else todo))
+
+
+def plan(steps, repin=(), fixed=(), locked=None, target=None):
+    return dict(start=("edge-client", "main"), steps=steps, fixed=list(fixed), pinned=[], repin=list(repin),
+                locked=locked or {}, target=target or {})
+
+
+class Admits(unittest.TestCase):
+    def test_caret_major(self):
+        self.assertTrue(rc.admits("4.1.0", "4.9.2"))
+        self.assertFalse(rc.admits("4.1.0", "5.0.0"))
+        self.assertFalse(rc.admits("4.1.0", "4.0.9"))
+
+    def test_caret_zero_minor_is_the_breaking_digit(self):
+        self.assertTrue(rc.admits("0.35.0", "0.35.4"))
+        self.assertFalse(rc.admits("0.35.0", "0.36.1"))
+
+    def test_caret_zero_zero(self):
+        self.assertTrue(rc.admits("0.0.3", "0.0.3"))
+        self.assertFalse(rc.admits("0.0.3", "0.0.4"))
+
+    def test_exact_and_compound(self):
+        self.assertTrue(rc.admits("=4.4.0", "4.4.0"))
+        self.assertFalse(rc.admits("=4.4.0", "4.4.1"))
+        self.assertTrue(rc.admits(">=1.2, <2", "1.9.0"))
+        self.assertFalse(rc.admits(">=1.2, <2", "2.0.0"))
+
+    def test_tilde(self):
+        self.assertTrue(rc.admits("~1.2.3", "1.2.9"))
+        self.assertFalse(rc.admits("~1.2.3", "1.3.0"))
+
+    def test_prerelease_needs_a_prerelease_requirement(self):
+        self.assertFalse(rc.admits("1.0.0", "1.1.0-rc.1"))
+
+
+class Operations(unittest.TestCase):
+    def setUp(self):
+        self.types = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
+        self.api = step("hopr-api", {"hopr-api": "4.4.1"}, todo={"hopr-api": "4.4.1"},
+                        gaps=[gap("hopr-types", "4.1.0", "5.0.0")], requires=["hopr-types"])
+
+    def by_id(self, ops):
+        return {o["id"]: o for o in ops}
+
+    def test_repin_waits_for_the_release_it_needs_and_release_waits_for_the_repin(self):
+        ops = rc.operations(plan([self.types, self.api]))
+        kinds = [(o["kind"], o["repo"]) for o in ops]
+        self.assertEqual(kinds, [("release", "hopr-types"), ("repin", "hopr-api"), ("release", "hopr-api")])
+        by = self.by_id(ops)
+        self.assertEqual(ops[0]["depends_on"], [])
+        self.assertEqual(ops[1]["depends_on"], [ops[0]["id"]])
+        self.assertEqual(sorted(ops[2]["depends_on"]), sorted([ops[0]["id"], ops[1]["id"]]))
+        self.assertEqual(ops[1]["edits"][0]["current"], "4.1.0")
+        self.assertEqual(ops[1]["edits"][0]["required"], "5.0.0")
+        self.assertEqual(ops[1]["edits"][0]["line"], 7)
+        self.assertEqual(ops[1]["version_bumps"], [])  # head is unpublished: no bump
+        self.assertTrue(all(d in by for o in ops for d in o["depends_on"]))
+
+    def test_repo_with_a_published_head_is_bumped_and_republished(self):
+        impls = step("hopr-impls", {"hopr-chain-connector": "0.28.0"}, gaps=[gap("hopr-types", "4.1.0", "5.0.0")],
+                     requires=["hopr-types"])
+        ops = rc.operations(plan([self.types, impls]))
+        repin, release = ops[1], ops[2]
+        self.assertEqual(repin["version_bumps"], [dict(crate="hopr-chain-connector", file="Cargo.toml",
+                                                       current="0.28.0", suggested="0.28.1")])
+        self.assertTrue(release["republish"])
+        self.assertEqual(release["crates"], [dict(name="hopr-chain-connector", version="0.28.1")])
+
+    def test_final_repin_waits_for_the_releases_it_names(self):
+        ops = rc.operations(plan([self.types], repin=[gap("hopr-types", "4.1.0", "5.0.0")]))
+        final = ops[-1]
+        self.assertEqual(final["kind"], "final_repin")
+        self.assertEqual(final["repo"], "edge-client")
+        self.assertEqual(final["depends_on"], [ops[0]["id"]])
+
+    def test_final_repin_is_ready_when_its_crates_are_already_published(self):
+        published = step("hopr-strategy", {"hopr-strategy": "5.5.1"})
+        ops = rc.operations(plan([published], repin=[gap("hopr-strategy", "5.4.0", "5.5.1")]))
+        self.assertEqual([o["kind"] for o in ops], ["final_repin"])
+        self.assertEqual(ops[0]["depends_on"], [])
+
+    def test_start_repo_lock_behind_the_released_versions_is_a_final_operation(self):
+        # requirements already admit the new version, so no edit, but the lock still pins the old one
+        ops = rc.operations(plan([self.types], locked={"hopr-types": "4.1.0"}, target={"hopr-types": "5.0.0"}))
+        final = ops[-1]
+        self.assertEqual(final["kind"], "final_repin")
+        self.assertEqual(final["edits"], [])
+        self.assertEqual(final["lock_updates"], [dict(crate="hopr-types", locked="4.1.0", target="5.0.0")])
+        self.assertEqual(final["depends_on"], [ops[0]["id"]])
+
+    def test_no_final_operation_when_the_lock_is_current(self):
+        ops = rc.operations(plan([step("hopr-api", {"hopr-api": "2.0.0"})], locked={"hopr-api": "2.0.0"},
+                                 target={"hopr-api": "2.0.0"}))
+        self.assertEqual(ops, [])
+
+    def test_nothing_to_do(self):
+        self.assertEqual(rc.operations(plan([step("hopr-api", {"hopr-api": "4.4.0"})])), [])
+
+    def test_repo_without_a_release_workflow_is_a_manual_release(self):
+        manual = step("rust-stream-ext-concurrent", {"rust-stream-ext-concurrent": "2.0.1"},
+                      todo={"rust-stream-ext-concurrent": "2.0.1"}, workflow=None)
+        ops = rc.operations(plan([manual]))
+        self.assertEqual(ops[0]["kind"], "release_manual")
+
+
+class Report(unittest.TestCase):
+    def setUp(self):
+        self.types = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
+        self.api = step("hopr-api", {"hopr-api": "4.4.1"}, todo={"hopr-api": "4.4.1"},
+                        gaps=[gap("hopr-types", "4.1.0", "5.0.0")], requires=["hopr-types"])
+
+    def test_first_ready_operation_is_next(self):
+        r = rc.status(plan([self.types, self.api]))
+        self.assertEqual(r["schema"], "hopr-release-cascade/v2")
+        self.assertEqual(r["state"], "release_ready")
+        self.assertEqual(r["next"]["id"], "op-1")
+        self.assertEqual(r["ready_operations"], ["op-1"])
+        self.assertEqual([c["crate"] for c in r["crates_to_change"]], ["hopr-types", "hopr-api"])
+        self.assertEqual([x["repo"] for x in r["repos_to_update"]], ["hopr-types", "hopr-api"])
+        self.assertEqual(r["repos_to_update"][1]["operations"], ["op-2", "op-3"])
+        self.assertTrue(r["repos_to_update"][1]["needs_pr"])
+        self.assertEqual([o["status"] for o in r["operations"]], ["ready", "pending", "pending"])
+
+    def test_repin_is_next_once_its_release_is_done(self):
+        r = rc.status(plan([step("hopr-types", {"hopr-types": "5.0.0"}), self.api]))
+        self.assertEqual(r["state"], "repin_required")
+        self.assertEqual(r["next"]["kind"], "repin")
+        self.assertEqual(r["next"]["repo"], "hopr-api")
+
+    def test_complete(self):
+        r = rc.status(plan([step("hopr-api", {"hopr-api": "4.4.0"})]))
+        self.assertEqual((r["state"], r["operations"], r["next"], r["resume"]), ("complete", [], {"kind": "none"}, None))
+
+
+if __name__ == "__main__":
+    unittest.main()

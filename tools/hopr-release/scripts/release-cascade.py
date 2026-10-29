@@ -22,18 +22,23 @@ succeeds and the crates show on crates.io. Later steps of the run may still fail
 A step is blocked while a repo's own requirements do not admit the versions released below
 it. Repin that repo first. A release publishes to crates.io and cannot be undone.
 
-Output. stdout is always one JSON document (schema "hopr-release-cascade/v1"); progress
-goes to stderr. --execute releases every ready step in order, then stops and reports where
-it stands. Fields:
-  state       release_ready | repin_required | final_repin_required | complete
-              | manual_release_required (repo has no release workflow)
-              | paused (waiting for confirmation) | error
-  summary     one sentence on the current state
-  steps       per repo in release order: status published | ready | blocked_repin,
-              crates with on_crates_io, repin_edits (file, line, key, current, required)
-  next        the single next action: release (command, crates), repin (edits), or none
-  conditions  what must hold before the cascade continues, each with a verify command
-  resume      the command to run once the conditions hold (null when complete)
+Output. stdout is always one JSON document (schema "hopr-release-cascade/v2"); progress
+goes to stderr. The dry run lists every operation to do, so a bot can propagate the repins,
+turn the list into a workflow, or run the releases. Fields:
+  state            release_ready | repin_required | final_repin_required
+                   | manual_release_required | complete | paused | error
+  summary          one sentence on where the cascade stands
+  repos_to_update  repo, branch, its operation ids, needs_pr, crates it releases
+  crates_to_change crate, version to publish, repo, branch, republish, operation id
+  operations       the full ordered list, leaf first. Each has id, kind, repo, branch, status
+                   (ready | pending), depends_on, description, and per kind:
+                   release / release_manual: crates, workflow, command, republish
+                   repin: edits (file, line, key, current, required), version_bumps, then
+                   final_repin: edits, lock_updates (crate, locked, target), then
+  ready_operations ids that can run now (no unfinished dependency)
+  next             the first ready operation, or {"kind": "none"}
+  conditions       what must hold before the cascade continues, each with a verify command
+  resume           the command to run once the conditions hold (null when complete)
   fixed_inputs, git_pinned_out_of_scope, warnings
 Exit code: 0 for every state except error (2).
 """
@@ -47,7 +52,7 @@ SKIP_DIRS = ("target/", "vendor/", "node_modules/", "/lib/")
 DEP_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "hopr-release" / "crates-repository.json"
 WORKSPACE = Path.cwd()
-SCHEMA = "hopr-release-cascade/v1"
+SCHEMA = "hopr-release-cascade/v2"
 
 
 class Stop(Exception):
@@ -156,19 +161,24 @@ def manifests(repo, ref):
 
 
 def packages(ms):
-    """{crate: version} of every publishable package in the manifests."""
-    ws_ver = next((m["workspace"]["package"]["version"] for m in ms.values()
-                   if isinstance(m.get("workspace", {}).get("package", {}).get("version"), str)), None)
+    """{crate: {version, file}} of every publishable package. `file` holds the version string."""
+    ws = next(((f, m["workspace"]["package"]["version"]) for f, m in ms.items()
+               if isinstance(m.get("workspace", {}).get("package", {}).get("version"), str)), (None, None))
     out = {}
-    for m in ms.values():
+    for f, m in ms.items():
         p = m.get("package")
         if not p or p.get("publish", True) is False:
             continue
         v = p.get("version")
-        v = ws_ver if isinstance(v, dict) and v.get("workspace") else v
+        file, v = (ws if isinstance(v, dict) and v.get("workspace") else (f, v))
         if isinstance(v, str):
-            out[p["name"]] = v
+            out[p["name"]] = dict(version=v, file=file)
     return out
+
+
+def bump_patch(v):
+    a, b, c = (ver(v) + (0, 0, 0))[:3]
+    return f"{a}.{b}.{c + 1}"
 
 
 def dep_entries(ms):
@@ -300,11 +310,13 @@ def build_plan(start_repo, start_branch):
     plan = {}
     for (repo, b), crates in steps.items():
         ms = manifests(repo, f"origin/{b}")
-        head = packages(ms)
+        pk = packages(ms)
+        head = {c: i["version"] for c, i in pk.items()}
         miss = [c for c in crates if c not in head]
         if miss:
             die(f"{repo}@{b}: crates.io lists {repo} as the repository of {miss}, but the branch has no such package")
         plan[(repo, b)] = dict(repo=repo, branch=b, crates=sorted(crates), head={c: head[c] for c in crates},
+                               files={c: pk[c]["file"] for c in crates},
                                entries=dep_entries(ms), workflow=release_workflow(repo, b))
     # order: a repo comes after every repo whose crates it requires, read from the branch heads
     crate_step = {c: k for k, s in plan.items() for c in s["crates"]}
@@ -318,12 +330,18 @@ def build_plan(start_repo, start_branch):
     target = {c: v for s in plan.values() for c, v in s["head"].items()}
     target.update({f["crate"]: f["version"] for f in fixed})
     steps = [plan[k] for k in order]
-    for s in steps:
+    for k in order:
+        s = plan[k]
+        s["requires"] = sorted({e["crate"] for e in s["entries"] if e["crate"] in crate_step and crate_step[e["crate"]] != k})
         s["todo"] = {c: v for c, v in s["head"].items() if not is_published(c, v)}
         s["gaps"] = gaps(s["entries"], target, owned)
+        # a repo whose head is published but whose requirements lag must be bumped and released again
+        s["republish"] = bool(s["gaps"]) and not s["todo"]
+        s["release_versions"] = {c: bump_patch(v) for c, v in s["head"].items()} if s["republish"] else s["todo"]
+        target.update(s["release_versions"])  # leaf first, so downstream repos see the version that will exist
     start_entries = dep_entries(manifests(start_repo, f"origin/{start_branch}"))
     return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned),
-                repin=gaps(start_entries, target, owned))
+                repin=gaps(start_entries, target, owned), locked={c: v for c, (_, v) in owned.items()}, target=target)
 
 
 def gaps(entries, target, owned):
@@ -350,67 +368,107 @@ def resume_command(start):
     return f"python3 {Path(sys.argv[0]).resolve()} --from {start[0]}@{start[1]} --execute"
 
 
+def operations(plan):
+    """Every operation still to do, leaf first, with the operations each one waits for."""
+    ops, rel = [], {}  # rel: crate -> id of the operation that releases it
+
+    def new(kind, **kw):
+        op = dict(id=f"op-{len(ops) + 1}", kind=kind, **kw)
+        ops.append(op)
+        return op
+
+    for s in plan["steps"]:
+        repin = None
+        if s["gaps"]:
+            bumps = [] if s["todo"] else [dict(crate=c, file=s["files"][c], current=v, suggested=bump_patch(v))
+                                           for c, v in s["head"].items()]
+            repin = new("repin", repo=s["repo"], branch=s["branch"], edits=edits(s["repo"], s["branch"], s["gaps"]),
+                        version_bumps=bumps, depends_on=sorted({rel[g["crate"]] for g in s["gaps"] if g["crate"] in rel}),
+                        description=f"repin {s['repo']}@{s['branch']} to the released versions"
+                                    + (" and bump its version" if bumps else ""),
+                        then="open a PR with these edits and a refreshed Cargo.lock, then merge it")
+        if s["todo"] or s["gaps"]:
+            crates = s["release_versions"]
+            deps = {rel[c] for c in s["requires"] if c in rel} | ({repin["id"]} if repin else set())
+            op = new("release" if s["workflow"] else "release_manual", repo=s["repo"], branch=s["branch"],
+                     workflow=s["workflow"], republish=s["republish"], depends_on=sorted(deps),
+                     crates=[dict(name=c, version=v) for c, v in crates.items()],
+                     description=f"release {', '.join(f'{c} {v}' for c, v in crates.items())} from {s['repo']}@{s['branch']}",
+                     command=(f"gh workflow run {s['workflow']} --repo {ORG}/{s['repo']} --ref {s['branch']} -f release_type=patch"
+                              if s["workflow"] else None))
+            rel.update({c: op["id"] for c in crates})
+    # the start repo's lock pins older versions even when its requirements already admit the new ones
+    lock_updates = [dict(crate=c, locked=v, target=plan["target"][c]) for c, v in sorted(plan.get("locked", {}).items())
+                    if c in plan.get("target", {}) and ver(plan["target"][c]) > ver(v)]
+    if plan["repin"] or lock_updates:
+        sr, sb = plan["start"]
+        named = {g["crate"] for g in plan["repin"]} | {u["crate"] for u in lock_updates}
+        new("final_repin", repo=sr, branch=sb, edits=edits(sr, sb, plan["repin"]), lock_updates=lock_updates,
+            version_bumps=[], depends_on=sorted({rel[c] for c in named if c in rel}),
+            description=f"update {sr}@{sb} to the released versions"
+                        + (f" (cargo update -p {' -p '.join(u['crate'] for u in lock_updates)})" if lock_updates else ""),
+            then="open a PR with the requirement edits and a refreshed Cargo.lock, then merge it")
+    for op in ops:
+        op["status"] = "pending" if op["depends_on"] else "ready"
+    return ops
+
+
+STATE = dict(release="release_ready", release_manual="manual_release_required", repin="repin_required",
+             final_repin="final_repin_required")
+
+
+def conditions_for(op, resume):
+    if op["kind"] == "release":
+        return [dict(id="publish_step", description=f"the run's '{PUBLISH_STEP}' step succeeds",
+                     verify=f"gh run list --repo {ORG}/{op['repo']} --workflow {op['workflow']} --limit 1"),
+                dict(id="on_crates_io", description="every listed crate version shows on crates.io",
+                     verify="; ".join(f"curl -s https://crates.io/api/v1/crates/{c['name']}/{c['version']}" for c in op["crates"]))]
+    if op["kind"] == "release_manual":
+        return [dict(id="on_crates_io", description="every listed crate version shows on crates.io",
+                     verify="; ".join(f"curl -s https://crates.io/api/v1/crates/{c['name']}/{c['version']}" for c in op["crates"]))]
+    return [dict(id="repin_merged", description=f"the repin PR is merged into {op['repo']}@{op['branch']}",
+                 verify=f"{resume} without --execute; operation {op['id']} must be gone from the list")]
+
+
 def status(plan):
-    """One report for every run. `state` says where the cascade stands; `next` and `conditions` say how it goes on."""
+    """The single report. `operations` is the full ordered list; `next` is the first one that can run now."""
     start = plan["start"]
-    steps = []
-    for i, s in enumerate(plan["steps"], 1):
-        st = "published" if not s["todo"] else "blocked_repin" if s["gaps"] else "ready"
-        steps.append(dict(index=i, repo=s["repo"], branch=s["branch"], workflow=s["workflow"], status=st,
-                          crates=[dict(name=c, version=v, on_crates_io=c not in s["todo"]) for c, v in s["head"].items()],
-                          repin_edits=edits(s["repo"], s["branch"], s["gaps"])))
+    ops = operations(plan)
     fixed = [dict(f, on_crates_io=is_published(f["crate"], f["version"])) for f in plan["fixed"]]
     warnings = [f"fixed input {f['crate']} {f['version']} is missing or yanked on crates.io" for f in fixed if not f["on_crates_io"]]
-    warnings += [f"{s['repo']}@{s['branch']} does not consume {g['crate']} {g['want']} ({g['file']}: {g['key']} = \"{g['req']}\")"
-                 for s in plan["steps"] if not s["todo"] for g in s["gaps"]]
-    first = next((s for s in plan["steps"] if s["todo"]), None)
+    repos = {}
+    for op in ops:
+        repos.setdefault((op["repo"], op["branch"]), []).append(op)
+    repos_to_update = [dict(repo=r, branch=b, operations=[o["id"] for o in os_],
+                            needs_pr=any(o["kind"] in ("repin", "final_repin") for o in os_),
+                            releases=[c["name"] for o in os_ if o["kind"].startswith("release") for c in o["crates"]])
+                       for (r, b), os_ in repos.items()]
+    crates_to_change = [dict(crate=c["name"], repo=o["repo"], branch=o["branch"], version=c["version"],
+                             republish=o["republish"], operation=o["id"])
+                        for o in ops if o["kind"].startswith("release") for c in o["crates"]]
+    ready = [o for o in ops if o["status"] == "ready"]
     resume = resume_command(start)
-    if first and first["gaps"]:
-        state = "repin_required"
-        summary = f"{first['repo']}@{first['branch']} must repin before its crates can be released"
-        nxt = dict(action="repin", repo=first["repo"], branch=first["branch"],
-                   edits=edits(first["repo"], first["branch"], first["gaps"]),
-                   then="open a PR with these edits and a refreshed Cargo.lock, then merge it")
-        conditions = [dict(id="repin_merged", description=f"the repin PR is merged into {first['repo']}@{first['branch']}",
-                           verify=f"{resume} (dry run first: drop --execute); step {steps[plan['steps'].index(first)]['index']} must show status ready")]
-    elif first and not first["workflow"]:
-        state = "manual_release_required"
-        summary = f"{first['repo']}@{first['branch']} has no release workflow; release {', '.join(first['todo'])} by hand"
-        nxt = dict(action="release_manual", repo=first["repo"], branch=first["branch"],
-                   crates=[dict(name=c, version=v) for c, v in first["todo"].items()],
-                   then="publish with the repo's own process (see its README)")
-        conditions = [dict(id="on_crates_io", description="every listed crate version shows on crates.io",
-                           verify="; ".join(f"curl -s https://crates.io/api/v1/crates/{c}/{v}" for c, v in first["todo"].items()))]
-    elif first:
-        state = "release_ready"
-        summary = f"{first['repo']}@{first['branch']} is ready to release {', '.join(first['todo'])}"
-        nxt = dict(action="release", repo=first["repo"], branch=first["branch"], workflow=first["workflow"],
-                   crates=[dict(name=c, version=v) for c, v in first["todo"].items()],
-                   command=f"gh workflow run {first['workflow']} --repo {ORG}/{first['repo']} --ref {first['branch']} -f release_type=patch")
-        conditions = [dict(id="publish_step", description=f"the run's '{PUBLISH_STEP}' step succeeds",
-                           verify=f"gh run list --repo {ORG}/{first['repo']} --workflow {first['workflow']} --limit 1"),
-                      dict(id="on_crates_io", description="every listed crate version shows on crates.io",
-                           verify="; ".join(f"curl -s https://crates.io/api/v1/crates/{c}/{v}" for c, v in first["todo"].items()))]
-    elif plan["repin"]:
-        state = "final_repin_required"
-        summary = f"every crate is released; {start[0]}@{start[1]} must repin"
-        nxt = dict(action="repin", repo=start[0], branch=start[1], edits=edits(start[0], start[1], plan["repin"]),
-                   then="open a PR with these edits and a refreshed Cargo.lock, then merge it")
-        conditions = [dict(id="repin_merged", description=f"the repin PR is merged into {start[0]}@{start[1]}",
-                           verify=f"{resume} (dry run first: drop --execute) must report state complete")]
+    if ready:
+        first = ready[0]
+        state = STATE[first["kind"]]
+        summary = f"{len(ops)} operations across {len(repos_to_update)} repos; next: {first['description']}"
+        nxt, conditions = first, conditions_for(first, resume)
     else:
-        state, summary, nxt, conditions = "complete", "every crate is released and the start repo requirements are current", dict(action="none"), []
+        state, summary = "complete", "every crate is released and the start repo requirements are current"
+        nxt, conditions = dict(kind="none"), []
     return dict(schema=SCHEMA, generated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-                start=dict(repo=start[0], branch=start[1]), state=state, summary=summary, steps=steps,
+                start=dict(repo=start[0], branch=start[1]), state=state, summary=summary,
+                repos_to_update=repos_to_update, crates_to_change=crates_to_change, operations=ops,
+                ready_operations=[o["id"] for o in ready], next=nxt, conditions=conditions,
                 fixed_inputs=fixed, git_pinned_out_of_scope=plan["pinned"], warnings=warnings,
-                next=nxt, conditions=conditions, resume=resume if state != "complete" else None)
+                resume=resume if state != "complete" else None)
 
 
 def error_report(start, msg, state="error"):
     return dict(schema=SCHEMA, generated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-                start=dict(repo=start[0], branch=start[1]), state=state, summary=msg, steps=[], fixed_inputs=[],
-                git_pinned_out_of_scope=[], warnings=[], next=dict(action="none"),
-                conditions=[], resume=resume_command(start))
+                start=dict(repo=start[0], branch=start[1]), state=state, summary=msg, repos_to_update=[],
+                crates_to_change=[], operations=[], ready_operations=[], next=dict(kind="none"), conditions=[],
+                fixed_inputs=[], git_pinned_out_of_scope=[], warnings=[], resume=resume_command(start))
 
 
 def gh_json(*a):
@@ -495,7 +553,8 @@ def main():
         plan = build_plan(repo, branch)
         report = status(plan)
         while a.execute and report["state"] == "release_ready":
-            i = next(k for k, st in enumerate(plan["steps"], 1) if st["todo"])
+            op = report["next"]
+            i = next(k for k, st in enumerate(plan["steps"], 1) if (st["repo"], st["branch"]) == (op["repo"], op["branch"]))
             release_step(i, plan["steps"][i - 1], a.yes, a.release_type)
             plan = build_plan(repo, branch)  # re-read heads and crates.io
             report = status(plan)

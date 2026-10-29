@@ -87,18 +87,34 @@ repos are cloned there (partial clone). No config file exists: each run derives 
 
 ### Output
 
-stdout is always one JSON document, schema `hopr-release-cascade/v1`. Progress goes to
-stderr. Exit code 0 for every state except `error` (2). Read these fields:
+stdout is always one JSON document, schema `hopr-release-cascade/v2`. Progress goes to
+stderr. Exit code 0 for every state except `error` (2). The dry run lists every operation
+still to do, leaf first, so a bot can propagate the repins, turn the list into a workflow,
+or run the releases itself.
 
 | Field | Meaning |
 | --- | --- |
 | `state` | `release_ready`, `repin_required`, `final_repin_required`, `manual_release_required`, `complete`, `paused`, `error` |
 | `summary` | One sentence on where the cascade stands. |
-| `steps` | Per repo in release order: `status` (`published`, `ready`, `blocked_repin`), crates with `on_crates_io`, `repin_edits`. |
-| `next` | The single next action: `release` (command, crates), `release_manual`, `repin` (edits), or `none`. |
+| `repos_to_update` | Per repo and branch: its operation ids, `needs_pr`, and the crates it releases. |
+| `crates_to_change` | Per crate: the version to publish, repo, branch, `republish`, operation id. |
+| `operations` | The full ordered list. Each has `id`, `kind`, `repo`, `branch`, `status` (`ready` or `pending`), `depends_on`, `description`. |
+| `ready_operations`, `next` | Ids that can run now, and the first of them. |
 | `conditions` | What must hold before the cascade continues, each with a `verify` command. |
 | `resume` | The command to run once the conditions hold. `null` when complete. |
-| `fixed_inputs`, `git_pinned_out_of_scope`, `warnings` | Inputs only checked on crates.io, org crates pinned by git (repin, not released), and gaps such as a repo that does not consume a new version. |
+| `fixed_inputs`, `git_pinned_out_of_scope`, `warnings` | Inputs only checked on crates.io, org crates pinned by git (repin, not released), and problems such as a yanked fixed input. |
+
+Operation kinds:
+
+| `kind` | Fields | Meaning |
+| --- | --- | --- |
+| `release` | `crates`, `workflow`, `command`, `republish` | Run the repo's release workflow. `republish` means the head version is already published, so the preceding `repin` bumps it. |
+| `release_manual` | `crates` | The repo has no release workflow. Publish by hand. |
+| `repin` | `edits`, `version_bumps`, `then` | Raise requirements in a library repo (file, line, key, current, required). Needs a PR with a refreshed `Cargo.lock`. |
+| `final_repin` | `edits`, `lock_updates`, `then` | Update the start repo: requirement edits, and lock entries that pin older versions than the released ones (`cargo update -p <crate>`). |
+
+Run the script once per start repo. `--from edge-client@release/4.1` and
+`--from hoprd@release/4.1` share the library operations and differ in the final one.
 
 The cascade pauses between releases whenever a repin PR must merge. After the merge, run
 the `resume` command. Each run reads the branch heads and crates.io again, so the report
