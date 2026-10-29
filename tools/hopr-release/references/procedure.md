@@ -114,7 +114,9 @@ rendering.
 
 ### Output
 
-stdout is always one JSON document, schema `hopr-release-cascade/v2`. Progress goes to
+With `-o json` (default) or `-o mjson`, stdout is one JSON document, schema `hopr-release-cascade/v2`
+(`-o plain` prints the same report as text). A malformed `--from` and any runtime error also
+end in this document, with `state` `error`. Progress goes to
 stderr. Exit code 0 for every state except `error` (2). The dry run lists every operation
 still to do, leaf first, so a bot can propagate the repins, turn the list into a workflow,
 or run the releases itself.
@@ -133,6 +135,18 @@ or run the releases itself.
 | `bump_heads` | Heads that are only CI's version bump after a release: crate, head, newest published. Not released. |
 | `pull_requests` | Draft PRs opened or found by `--execute` and `--execute-no-release`: operation, repo, base, branch, url, state (`opened` or `exists`). |
 | `fixed_inputs`, `git_pinned_out_of_scope`, `warnings` | Inputs only checked on crates.io, org crates pinned by git (repin, not released), and problems such as a yanked fixed input. |
+
+A `repin` operation looks like this (abridged). The edit names the file, the line and the exact
+requirement to change, and the bump (when the repo's head is already published) the version
+line to raise:
+
+```json
+{"id": "op-3", "kind": "repin", "repo": "hopr-api", "branch": "main", "status": "pending",
+ "depends_on": ["op-2"], "layer": 2, "concurrency_group": "layer-2",
+ "edits": [{"file": "Cargo.toml", "line": 85, "key": "hopr-types", "crate": "hopr-types",
+            "current": "4.1.0", "required": "5.0.0"}],
+ "version_bumps": []}
+```
 
 Operation kinds:
 

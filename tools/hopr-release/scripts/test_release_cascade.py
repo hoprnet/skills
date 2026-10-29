@@ -22,6 +22,7 @@ def step(repo, crates, todo=None, gaps=(), requires=(), workflow="release.yaml",
     republish = bool(gaps) and not todo
     return dict(repo=repo, branch=branch, workflow=workflow, crates=sorted(head), head=head, todo=todo,
                 gaps=list(gaps), requires=list(requires), hard_requires=list(requires), files={c: "Cargo.toml" for c in head}, republish=republish,
+                bump_crates=sorted(head) if republish else [],
                 release_versions=({c: rc.bump_patch(v) for c, v in head.items()} if republish else todo))
 
 
@@ -88,23 +89,29 @@ class Batch(unittest.TestCase):
     def test_only_planned_crates_are_released(self):
         # a crate whose head was bumped by CI after an earlier release is not in the first plan
         report = dict(operations=[self.op("op-1", "hopr-types"), self.op("op-2", "hopr-bindings")])
-        got = rc.next_batch(report, planned={"hopr-types"}, remaining=None)
+        got = rc.next_batch(report, planned={("hopr-types", "1.0.0")}, remaining=None)
         self.assertEqual([o["id"] for o in got], ["op-1"])
 
     def test_pending_and_non_release_operations_are_skipped(self):
         report = dict(operations=[self.op("op-1", "a", status="pending"), self.op("op-2", "b", kind="repin"),
                                   self.op("op-3", "c", kind="release_manual"), self.op("op-4", "d")])
-        got = rc.next_batch(report, planned={"a", "b", "c", "d"}, remaining=None)
+        got = rc.next_batch(report, planned={(n, "1.0.0") for n in "abcd"}, remaining=None)
         self.assertEqual([o["id"] for o in got], ["op-4"])
 
     def test_remaining_caps_the_batch(self):
         report = dict(operations=[self.op("op-1", "a"), self.op("op-2", "b"), self.op("op-3", "c")])
-        self.assertEqual([o["id"] for o in rc.next_batch(report, planned={"a", "b", "c"}, remaining=2)], ["op-1", "op-2"])
-        self.assertEqual(rc.next_batch(report, planned={"a", "b", "c"}, remaining=0), [])
+        planned = {(n, "1.0.0") for n in "abc"}
+        self.assertEqual([o["id"] for o in rc.next_batch(report, planned=planned, remaining=2)], ["op-1", "op-2"])
+        self.assertEqual(rc.next_batch(report, planned=planned, remaining=0), [])
 
     def test_planned_crates_are_every_release_crate_of_the_first_plan(self):
         report = dict(operations=[self.op("op-1", "a"), self.op("op-2", "b", status="pending"), self.op("op-3", "c", kind="repin")])
-        self.assertEqual(rc.planned_crates(report), {"a", "b"})
+        self.assertEqual(rc.planned_crates(report), {("a", "1.0.0"), ("b", "1.0.0")})
+
+    def test_the_same_crate_at_a_new_version_is_not_in_the_plan(self):
+        report = dict(operations=[self.op("op-1", "a")])
+        report["operations"][0]["crates"][0]["version"] = "1.0.1"  # CI's bump landed a new head
+        self.assertEqual(rc.next_batch(report, planned={("a", "1.0.0")}, remaining=None), [])
 
 
 class Operations(unittest.TestCase):
@@ -607,6 +614,213 @@ class NixCwd(unittest.TestCase):
         self.assertEqual(calls[0][0], "git")
 
 
+class Versions(unittest.TestCase):
+    def test_a_stable_release_ranks_above_its_prereleases(self):
+        self.assertGreater(rc.vkey("5.2.0"), rc.vkey("5.2.0-rc.1"))
+        self.assertGreater(rc.vkey("5.2.0-rc.2"), rc.vkey("5.2.0-rc.1"))
+        self.assertGreater(rc.vkey("5.2.0-rc.10"), rc.vkey("5.2.0-rc.2"))
+        self.assertGreater(rc.vkey("5.2.1-rc.1"), rc.vkey("5.2.0"))
+
+    def test_a_lock_on_a_prerelease_is_updated_to_the_stable_release(self):
+        ops = rc.operations(plan([], locked={"x": "5.2.0-rc.1"}, target={"x": "5.2.0"}))
+        self.assertEqual(ops[0]["lock_updates"], [dict(crate="x", locked="5.2.0-rc.1", target="5.2.0")])
+
+    def test_wildcards_are_tilde_ranges(self):
+        self.assertTrue(rc.admits("1.2.*", "1.2.9"))
+        self.assertFalse(rc.admits("1.2.*", "1.3.0"))
+        self.assertTrue(rc.admits("1.*", "1.9.0"))
+        self.assertFalse(rc.admits("1.*", "2.0.0"))
+
+    def test_an_exact_prerelease_requirement_matches_only_that_prerelease(self):
+        self.assertFalse(rc.admits("=2.3.0-rc.2", "2.3.0-rc.1"))
+        self.assertTrue(rc.admits("=2.3.0-rc.2", "2.3.0-rc.2"))
+
+    def test_next_free_patch_skips_every_version_crates_io_has_seen(self):
+        self.assertEqual(rc.next_free_patch(["0.28.0", "0.28.1", "0.28.2"], "0.28.0"), "0.28.3")
+        self.assertEqual(rc.next_free_patch([], "1.0.0"), "1.0.1")
+
+
+class Throttle(unittest.TestCase):
+    def test_requests_are_spaced_by_the_interval(self):
+        now, slept = [100.0], []
+        t = rc.Throttle(1.0, clock=lambda: now[0], sleep=lambda d: (slept.append(round(d, 3)), now.__setitem__(0, now[0] + d)))
+        t.wait()                 # first request: no wait
+        now[0] += 0.25
+        t.wait()                 # 0.25 s later: waits the rest of the interval
+        now[0] += 2.0
+        t.wait()                 # long after: no wait
+        self.assertEqual(slept, [0.75])
+
+
+class RepositoryCache(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        self.saved = (rc.CACHE, rc._repo_cache, rc.crates_io)
+        rc.CACHE, rc._repo_cache = self.tmp / "cache.json", None
+        self.calls = []
+
+    def tearDown(self):
+        import shutil
+        rc.CACHE, rc._repo_cache, rc.crates_io = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def answers(self, repo):
+        def fake(name, version=None):
+            self.calls.append(name)
+            return {"crate": {"repository": repo}}
+        rc.crates_io = fake
+
+    def test_a_crate_without_a_repository_is_asked_again_next_time(self):
+        self.answers(None)
+        self.assertIsNone(rc.org_repo_of("x"))
+        self.assertIsNone(rc.org_repo_of("x"))
+        self.assertEqual(self.calls, ["x", "x"])
+
+    def test_a_found_repository_is_cached(self):
+        self.answers("https://github.com/hoprnet/hopr-api")
+        self.assertEqual(rc.org_repo_of("x"), "hopr-api")
+        self.assertEqual(rc.org_repo_of("x"), "hopr-api")
+        self.assertEqual(self.calls, ["x"])
+
+    def test_a_third_party_repository_is_cached_too(self):
+        self.answers("https://github.com/serde-rs/serde")
+        self.assertIsNone(rc.org_repo_of("serde"))
+        self.assertIsNone(rc.org_repo_of("serde"))
+        self.assertEqual(self.calls, ["serde"])
+
+
+class ManifestScan(unittest.TestCase):
+    def test_only_vendored_and_build_directories_are_skipped(self):
+        for path in ("crates/lib/example/Cargo.toml", "Cargo.toml", "ethereum/bindings/Cargo.toml"):
+            self.assertFalse(rc.skipped_manifest(path), path)
+        for path in ("lib/forge-std/Cargo.toml", "vendor/x/Cargo.toml", "a/target/debug/Cargo.toml", "node_modules/x/Cargo.toml"):
+            self.assertTrue(rc.skipped_manifest(path), path)
+
+
+class TableLines(unittest.TestCase):
+    text = ('[package]\nname = "x"\n\n[dependencies]\nhopr-types = "4.1.0"\n\n[dev-dependencies]\nhopr-types = "4.0.0"\n'
+            "\n[target.'cfg(unix)'.dependencies]\nhopr-types = \"3.0.0\"\n\n[workspace.dependencies]\nhopr-types = \"2.0.0\"\n"
+            '\n[dependencies.serde]\nversion = "1"\n')
+
+    def test_the_line_is_found_inside_the_named_table(self):
+        self.assertEqual(rc.find_line(self.text, "hopr-types", "dependencies"), 5)
+        self.assertEqual(rc.find_line(self.text, "hopr-types", "dev-dependencies"), 8)
+        self.assertEqual(rc.find_line(self.text, "hopr-types", "target.cfg(unix).dependencies"), 11)
+        self.assertEqual(rc.find_line(self.text, "hopr-types", "workspace.dependencies"), 14)
+
+    def test_without_a_table_the_first_assignment_is_used(self):
+        self.assertEqual(rc.find_line(self.text, "hopr-types", None), 5)
+
+    def test_entries_record_their_table(self):
+        ms = {"Cargo.toml": {"dependencies": {"a": "1.0"}, "dev-dependencies": {"a": "0.9"},
+                             "target": {"cfg(unix)": {"dependencies": {"a": "1.1"}}}, "workspace": {"dependencies": {"a": "1.2"}}}}
+        tables = sorted((e["table"], e["req"]) for e in rc.dep_entries(ms))
+        self.assertEqual(tables, [("dependencies", "1.0"), ("dev-dependencies", "0.9"),
+                                  ("target.cfg(unix).dependencies", "1.1"), ("workspace.dependencies", "1.2")])
+
+
+class MixedRepos(unittest.TestCase):
+    def test_a_published_crate_with_a_stale_requirement_is_bumped_with_its_unpublished_sibling(self):
+        s = step("hopr-impls", {"a": "1.0.1", "b": "2.0.0"}, todo={"a": "1.0.1"},
+                 gaps=[dict(gap("hopr-types", "4.1.0", "5.0.0"), file="b/Cargo.toml")])
+        s["files"] = {"a": "a/Cargo.toml", "b": "b/Cargo.toml"}
+        s["bump_crates"], s["release_versions"], s["republish"] = ["b"], {"a": "1.0.1", "b": "2.0.1"}, True
+        ops = rc.operations(plan([step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"}), s]))
+        repin = next(o for o in ops if o["kind"] == "repin")
+        self.assertEqual([b["crate"] for b in repin["version_bumps"]], ["b"])
+        release = next(o for o in ops if o["kind"] == "release" and o["repo"] == "hopr-impls")
+        self.assertEqual(sorted((c["name"], c["version"]) for c in release["crates"]), [("a", "1.0.1"), ("b", "2.0.1")])
+
+    def test_which_published_crates_a_gap_touches(self):
+        files = {"a": "a/Cargo.toml", "b": "b/Cargo.toml"}
+        self.assertEqual(rc.crates_with_gaps(["a", "b"], files, [dict(file="b/Cargo.toml")]), ["b"])
+        self.assertEqual(rc.crates_with_gaps(["a", "b"], files, [dict(file="Cargo.toml")]), ["a", "b"])  # workspace-level
+        self.assertEqual(rc.crates_with_gaps(["a"], {"a": "Cargo.toml"}, [dict(file="Cargo.toml")]), ["a"])
+        self.assertEqual(rc.crates_with_gaps(["a", "b"], files, []), [])
+
+
+class RunSettings(unittest.TestCase):
+    def ns(self, **kw):
+        from types import SimpleNamespace
+        base = dict(workspace=None, forge="auto", output="json", release_type="patch", max_releases=None)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_defaults_add_nothing(self):
+        self.assertEqual(rc.resume_flags(self.ns()), "")
+
+    def test_run_settings_are_kept_and_quoted(self):
+        flags = rc.resume_flags(self.ns(workspace=Path("/tmp/my ws"), forge="api", output="mjson", release_type="minor", max_releases=2))
+        self.assertIn("--workspace '/tmp/my ws'", flags)
+        for part in ("--forge api", "-o mjson", "--release-type minor", "--max-releases 2"):
+            self.assertIn(part, flags)
+
+    def test_the_start_argument_needs_a_branch(self):
+        self.assertEqual(rc.parse_start("edge-client@release/4.1"), ("edge-client", "release/4.1"))
+        with self.assertRaises(rc.Stop):
+            rc.parse_start("edge-client")
+
+
+class Prompts(unittest.TestCase):
+    def test_the_prompt_goes_to_stderr_and_stdout_stays_clean(self):
+        import io, contextlib, builtins
+        out, err = io.StringIO(), io.StringIO()
+        saved = builtins.input
+        builtins.input = lambda *a: "yes"
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                answer = rc.ask("release 1 at once? ")
+        finally:
+            builtins.input = saved
+        self.assertEqual((answer, out.getvalue()), ("yes", ""))
+        self.assertIn("release 1 at once?", err.getvalue())
+
+
+class DispatchRunId(unittest.TestCase):
+    def test_the_run_id_comes_from_the_dispatch_response(self):
+        http = FakeHttp({("POST", "/dispatches"): (200, {"workflow_run_id": 99})})
+        self.assertEqual(rc.ApiForge("t", http).dispatch("r", "release.yaml", "main", {"release_type": "patch"}), 99)
+        self.assertTrue(http.calls[0][2]["return_run_details"])
+
+    def test_an_empty_204_gives_no_id_so_the_run_list_is_used(self):
+        http = FakeHttp({("POST", "/dispatches"): (204, None)})
+        self.assertIsNone(rc.ApiForge("t", http).dispatch("r", "release.yaml", "main", {}))
+
+    def test_a_422_for_the_new_parameter_retries_without_it(self):
+        answers = iter([(422, {"message": "Unexpected inputs"}), (204, None)])
+        calls = []
+        def http(method, url, body=None):
+            calls.append(body)
+            return next(answers)
+        self.assertIsNone(rc.ApiForge("t", http).dispatch("r", "release.yaml", "main", {}))
+        self.assertIn("return_run_details", calls[0])
+        self.assertNotIn("return_run_details", calls[1])
+
+    def test_gh_output_with_a_run_url_gives_the_id(self):
+        self.assertEqual(rc.run_id_from_output("Created workflow_dispatch event\nhttps://github.com/hoprnet/hopr-types/actions/runs/40874170666\n"), 40874170666)
+        self.assertIsNone(rc.run_id_from_output("Created workflow_dispatch event for release.yaml at main\n"))
+
+
+class AnonymousForge(unittest.TestCase):
+    def test_clones_over_https_without_credentials(self):
+        calls = []
+        saved = rc.run
+        rc.run = lambda *a, **kw: calls.append(a) or (0, "")
+        try:
+            rc.AnonForge().clone("hopr-api", Path("/w/hopr-api"))
+        finally:
+            rc.run = saved
+        self.assertIn("https://github.com/hoprnet/hopr-api", calls[0])
+
+    def test_anything_that_changes_github_needs_a_login(self):
+        with self.assertRaises(rc.Stop) as e:
+            rc.AnonForge().dispatch("r", "w", "main", {})
+        self.assertIn("GH_TOKEN", str(e.exception))
+        with self.assertRaises(rc.Stop):
+            rc.AnonForge().create_pr("r", "h", "b", "t", "x")
+
+
 class Layers(unittest.TestCase):
     def test_independent_operations_share_a_layer_and_dependents_come_after(self):
         a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
@@ -696,7 +910,7 @@ class Forge(unittest.TestCase):
         http = FakeHttp({("POST", "/repos/hoprnet/hopr-types/actions/workflows/release.yaml/dispatches"): (204, None)})
         rc.ApiForge("tok", http).dispatch("hopr-types", "release.yaml", "compat/v4", {"release_type": "patch"})
         method, url, body = http.calls[0]
-        self.assertEqual((method, body), ("POST", {"ref": "compat/v4", "inputs": {"release_type": "patch"}}))
+        self.assertEqual((method, body["ref"], body["inputs"]), ("POST", "compat/v4", {"release_type": "patch"}))
         self.assertTrue(url.startswith("https://api.github.com/repos/hoprnet/hopr-types/"))
 
     def test_api_run_ids_reads_workflow_runs(self):

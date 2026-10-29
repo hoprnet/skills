@@ -49,10 +49,10 @@ confirm the real commit you are pinning to against the branch it must live on.
 Full step-by-step with the repo and branch map: [references/procedure.md](references/procedure.md).
 
 To release the org crates a repo depends on, leaf to root, run
-`scripts/release-cascade.py --from <repo>@<branch>`. It defaults to a dry run and always
-prints one JSON report: the full ordered list of operations (releases, repins, the final
-lock update), which repos and crates change, the next ready operation, the conditions to
-continue, and the resume command. Tests: `python3 -I scripts/test_release_cascade.py`. See
+`scripts/release-cascade.py --from <repo>@<branch>`. It defaults to a dry run and, for a
+valid invocation, prints one report (JSON by default, `-o plain` for text): the full ordered
+list of operations (releases, repins, the final lock update), which repos and crates change,
+the next ready operation, the conditions to continue, and the resume command. Tests: `python3 -I scripts/test_release_cascade.py`. See
 "Publishing the crates.io crates, leaf to root" in the procedure.
 
 ## Gotchas that bite every time
@@ -69,7 +69,10 @@ load-bearing ones:
   `..`) as tripwires, so a new upstream field becomes a compile error. Wire the new
   field through; do not paper over it with `..Default::default()`. (See rust-engineer.)
 - **Publishing goes through the Nix `build-library` workflow in the dev shell, not
-  plain `cargo publish`.** The GitHub release workflow only creates the Release/tag.
+  plain `cargo publish`.** For the library crates that is the `Publish library` step of
+  each repo's release workflow, which `scripts/release-cascade.py` triggers (see
+  "Publishing the crates.io crates, leaf to root" in the procedure); the job after it
+  creates the Release/tag and bumps the version.
 
 ## Governance
 

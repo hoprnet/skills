@@ -73,13 +73,13 @@ turn the list into a workflow, or run the releases. Fields:
 Exit code: 0 for every state except error (2).
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import argparse, base64, datetime, hashlib, json, shlex, os, re, shutil, subprocess, sys, time, tomllib, urllib.parse, urllib.request, urllib.error
+import argparse, base64, datetime, hashlib, json, shlex, os, re, shutil, subprocess, sys, threading, time, tomllib, urllib.parse, urllib.request, urllib.error
 from pathlib import Path
 
 ORG = "hoprnet"
 UA = "hoprnet-release-cascade"
 PUBLISH_STEP = "Publish library"  # step name in hoprnet/hopr-workflows build-library.yaml
-SKIP_DIRS = ("target/", "vendor/", "node_modules/", "/lib/")
+SKIP_SEGMENTS = ("target", "vendor", "node_modules")  # directories whose manifests are not part of the repo's crates
 DEP_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "hopr-release" / "crates-repository.json"
 WORKSPACE = Path.cwd()
@@ -135,10 +135,39 @@ def ver(s):
     return tuple(int(x) for x in re.findall(r"\d+", s.split("-")[0])[:3])
 
 
+def prerelease(s):
+    """The prerelease tag of a version or of a comparator such as `=1.0.0-rc.1`, without build metadata."""
+    return s.split("+")[0].partition("-")[2]
+
+
+def vkey(s):
+    """Sort key: numeric version first, a stable release above its prereleases, prereleases by their parts."""
+    pre = prerelease(s)
+    parts = tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split(".")) if pre else ()
+    return (ver(s), 0 if pre else 1, parts)
+
+
 # ---------- crates.io ----------
+
+class Throttle:
+    """At most one call per `interval` seconds, across threads."""
+
+    def __init__(self, interval, clock=time.monotonic, sleep=time.sleep):
+        self.interval, self.clock, self.sleep, self.last, self.lock = interval, clock, sleep, None, threading.Lock()
+
+    def wait(self):
+        with self.lock:
+            if self.last is not None and self.clock() - self.last < self.interval:
+                self.sleep(self.interval - (self.clock() - self.last))
+            self.last = self.clock()
+
+
+CRATES_THROTTLE = Throttle(1.0)  # crates.io asks for at most one API request per second
+
 
 def crates_io(name, version=None):
     url = f"https://crates.io/api/v1/crates/{name}" + (f"/{version}" if version else "")
+    CRATES_THROTTLE.wait()
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=20) as r:
             return json.load(r)
@@ -164,13 +193,13 @@ def org_repo_of(crate):
             _repo_cache = json.loads(CACHE.read_text())
         except (OSError, json.JSONDecodeError):
             _repo_cache = {}
-    if crate not in _repo_cache:
-        time.sleep(1)  # crates.io asks for at most one request per second
+    if not _repo_cache.get(crate):  # a crate with no repository yet is asked again next time
         d = crates_io(crate)
         _repo_cache[crate] = (d or {}).get("crate", {}).get("repository")
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(_repo_cache, indent=1))
-    url = _repo_cache[crate] or ""
+        if _repo_cache[crate]:
+            CACHE.parent.mkdir(parents=True, exist_ok=True)
+            CACHE.write_text(json.dumps(_repo_cache, indent=1))
+    url = _repo_cache.get(crate) or ""
     m = re.match(r"https?://(?:www\.)?github\.com/([^/]+)/([^/#?]+)", url, re.I)
     if m and m.group(1).lower() == ORG:
         return m.group(2).removesuffix(".git")
@@ -179,9 +208,14 @@ def org_repo_of(crate):
 
 # ---------- manifests ----------
 
+def skipped_manifest(path):
+    """Vendored and build directories anywhere in the path, and the top-level lib/ (vendored libraries)."""
+    return path.startswith("lib/") or any(seg in SKIP_SEGMENTS for seg in path.split("/")[:-1])
+
+
 def tree_files(repo, ref):
     return [f for f in git(repo, "ls-tree", "-r", "--name-only", ref).split("\n")
-            if f.endswith("Cargo.toml") and not any(d in f for d in SKIP_DIRS)]
+            if f.endswith("Cargo.toml") and not skipped_manifest(f)]
 
 
 def manifests(repo, ref):
@@ -253,16 +287,29 @@ def hard_needs(entries, own, releasing, published=published_versions):
     return sorted(out)
 
 
+def all_versions(crate):
+    """Every version crates.io has seen for a crate, yanked ones included."""
+    return [v["num"] for v in (crates_io(crate) or {"versions": []})["versions"]]
+
+
+def next_free_patch(seen, v):
+    """The next patch version after `v` that is not in `seen`."""
+    v = bump_patch(v)
+    while v in set(seen):
+        v = bump_patch(v)
+    return v
+
+
 def bump_patch(v):
     a, b, c = (ver(v) + (0, 0, 0))[:3]
     return f"{a}.{b}.{c + 1}"
 
 
 def dep_entries(ms):
-    """Every versioned dependency: {file, key, crate, req}. Resolves `package =` renames."""
+    """Every versioned dependency: {file, table, key, crate, req}. Resolves `package =` renames."""
     out = []
 
-    def table(file, t):
+    def table(file, t, label):
         for key, spec in (t or {}).items():
             crate, req = key, None
             if isinstance(spec, str):
@@ -270,35 +317,35 @@ def dep_entries(ms):
             elif isinstance(spec, dict):
                 crate, req = spec.get("package", key), spec.get("version")
             if req:
-                out.append(dict(file=file, key=key, crate=crate, req=req))
+                out.append(dict(file=file, table=label, key=key, crate=crate, req=req))
 
     for f, m in ms.items():
         for t in DEP_TABLES:
-            table(f, m.get(t))
-        for tgt in m.get("target", {}).values():
+            table(f, m.get(t), t)
+        for cfg, tgt in m.get("target", {}).items():
             for t in DEP_TABLES:
-                table(f, tgt.get(t))
-        table(f, m.get("workspace", {}).get("dependencies"))
+                table(f, tgt.get(t), f"target.{cfg}.{t}")
+        table(f, m.get("workspace", {}).get("dependencies"), "workspace.dependencies")
     return out
 
 
 def git_pins(ms):
-    """Dependencies pinned to a git ref of an org repo: {file, key, crate, git, ref}."""
+    """Dependencies pinned to a git ref of an org repo: {file, table, key, crate, git, ref}."""
     out = []
 
-    def table(file, t):
+    def table(file, t, label):
         for key, spec in (t or {}).items():
             if isinstance(spec, dict) and f"github.com/{ORG}/" in spec.get("git", "").lower():
                 ref = next((f"{k} {spec[k]}" for k in ("branch", "rev", "tag") if k in spec), "default branch")
-                out.append(dict(file=file, key=key, crate=spec.get("package", key), git=spec["git"], ref=ref))
+                out.append(dict(file=file, table=label, key=key, crate=spec.get("package", key), git=spec["git"], ref=ref))
 
     for f, m in ms.items():
         for t in DEP_TABLES:
-            table(f, m.get(t))
-        for tgt in m.get("target", {}).values():
+            table(f, m.get(t), t)
+        for cfg, tgt in m.get("target", {}).items():
             for t in DEP_TABLES:
-                table(f, tgt.get(t))
-        table(f, m.get("workspace", {}).get("dependencies"))
+                table(f, tgt.get(t), f"target.{cfg}.{t}")
+        table(f, m.get("workspace", {}).get("dependencies"), "workspace.dependencies")
     return out
 
 
@@ -316,6 +363,8 @@ def admits(req, v):
     for part in (p.strip() for p in req.split(",")):
         if part in ("", "*"):
             continue
+        if part.endswith(".*"):
+            part = "~" + part[:-2]  # Cargo: 1.2.* is ~1.2 and 1.* is ~1
         m = re.match(r"(\^|~|=|>=|<=|>|<)?\s*(\d+(?:\.\d+){0,2})", part)
         if not m:
             return False
@@ -327,7 +376,7 @@ def admits(req, v):
         elif op == "~":
             ok = (a, b, c) <= vt < ((a + 1, 0, 0) if n == 1 else (a, b + 1, 0))
         elif op == "=":
-            ok = vt == (a, b, c) if n == 3 else vt[:n] == (a, b, c)[:n]
+            ok = (vt == (a, b, c) if n == 3 else vt[:n] == (a, b, c)[:n]) and prerelease(v) == prerelease(part)
         else:
             ok = {">=": vt >= (a, b, c), ">": vt > (a, b, c), "<=": vt <= (a, b, c), "<": vt < (a, b, c)}[op]
         if not ok:
@@ -368,7 +417,7 @@ def discover(repo, branch):
                 r = org_repo_of(c["name"])
                 if r:
                     old = owned.get(c["name"])
-                    owned[c["name"]] = (r, max(c["version"], old[1], key=ver) if old else c["version"])
+                    owned[c["name"]] = (r, max(c["version"], old[1], key=vkey) if old else c["version"])
                     stack.append(c)
             else:
                 stack.append(c)
@@ -443,13 +492,14 @@ def build_plan(start_repo, start_branch, planned=None):
         # a head that is only CI's post-release bump (or, in a later plan of one run, any head outside the first
         # plan) is not a release; the newest published version stands in for it
         for c in [c for c, v in s["todo"].items()
-                  if (planned is not None and c not in planned) or bump_only(s["repo"], f"origin/{s['branch']}", v)]:
+                  if (planned is not None and (c, v) not in planned) or bump_only(s["repo"], f"origin/{s['branch']}", v)]:
             bump_heads.append(dict(crate=c, head=s["todo"].pop(c), published=pick_latest_compatible(published_versions(c), s["head"][c])))
             target[c] = bump_heads[-1]["published"] or s["head"][c]
         s["gaps"] = gaps(s["entries"], target, owned)
-        # a repo whose head is published but whose requirements lag must be bumped and released again
-        s["republish"] = bool(s["gaps"]) and not s["todo"]
-        s["release_versions"] = {c: bump_patch(v) for c, v in s["head"].items()} if s["republish"] else s["todo"]
+        # a published crate whose requirements lag must be bumped and released again, also next to an unpublished sibling
+        s["bump_crates"] = crates_with_gaps([c for c in s["head"] if c not in s["todo"]], s["files"], s["gaps"])
+        s["republish"] = bool(s["bump_crates"])
+        s["release_versions"] = {**s["todo"], **{c: next_free_patch(all_versions(c), s["head"][c]) for c in s["bump_crates"]}}
         s["hard_requires"] = hard_needs(s["entries"], set(s["crates"]), releasing)
         releasing |= set(s["release_versions"])
         target.update(s["release_versions"])  # leaf first, so downstream repos see the version that will exist
@@ -459,12 +509,21 @@ def build_plan(start_repo, start_branch, planned=None):
     for pin in git_pins(start_ms):
         locked = pinned.get(pin["crate"])
         swap_to = pick_latest_compatible(published_versions(pin["crate"]), locked) if locked else None
-        if swap_to and ver(swap_to) < ver(locked):
+        if swap_to and vkey(swap_to) < vkey(locked):
             swap_to = None
-        pins.append(dict(pin, line=line_of(start_repo, f"origin/{start_branch}", pin["file"], pin["key"]), locked=locked, target=swap_to))
+        pins.append(dict(pin, line=line_of(start_repo, f"origin/{start_branch}", pin["file"], pin["key"], pin.get("table")),
+                         locked=locked, target=swap_to))
     return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned), pins=pins,
                 patched=patch_pins(start_ms), bump_heads=bump_heads,
                 repin=gaps(start_entries, target, owned), locked={c: v for c, (_, v) in owned.items()}, target=target)
+
+
+def crates_with_gaps(crates, files, gap_list):
+    """Published crates whose manifest holds a stale requirement. A gap in the root manifest of a virtual
+    workspace (workspace.dependencies) may touch every crate, so it counts for all of them."""
+    gap_files = {g["file"] for g in gap_list}
+    direct = [c for c in crates if files[c] in gap_files]
+    return sorted(crates) if "Cargo.toml" in gap_files and "Cargo.toml" not in files.values() else direct
 
 
 def gaps(entries, target, owned):
@@ -505,8 +564,9 @@ class GhForge:
         return rows[0]["url"] if rows else None
 
     def dispatch(self, repo, workflow, ref, inputs):
-        run("gh", "workflow", "run", workflow, "--repo", f"{ORG}/{repo}", "--ref", ref,
-            *[a for k, v in inputs.items() for a in ("-f", f"{k}={v}")])
+        """Triggers the workflow. Returns the run id when gh prints the run URL (gh 2.87+), else None."""
+        return run_id_from_output(run("gh", "workflow", "run", workflow, "--repo", f"{ORG}/{repo}", "--ref", ref,
+                                      *[a for k, v in inputs.items() for a in ("-f", f"{k}={v}")])[1])
 
     def run_ids(self, repo, workflow, branch):
         rows = json.loads(run("gh", "run", "list", "--repo", f"{ORG}/{repo}", "--workflow", workflow, "--branch", branch,
@@ -565,7 +625,14 @@ class ApiForge:
         return rows[0]["html_url"] if rows else None
 
     def dispatch(self, repo, workflow, ref, inputs):
-        self._call("POST", f"/repos/{ORG}/{repo}/actions/workflows/{workflow}/dispatches", {"ref": ref, "inputs": inputs}, ok=(204,))
+        """Triggers the workflow. Returns the run id when the API reports it (return_run_details), else None."""
+        url = f"{self.API}/repos/{ORG}/{repo}/actions/workflows/{workflow}/dispatches"
+        status, data = self.http("POST", url, {"ref": ref, "inputs": inputs, "return_run_details": True})
+        if status == 422:  # an API version that does not know return_run_details
+            status, data = self.http("POST", url, {"ref": ref, "inputs": inputs})
+        if status not in (200, 204):
+            die(f"GitHub API POST dispatches for {repo} returned {status}: {(data or {}).get('message', '')}")
+        return (data or {}).get("workflow_run_id")
 
     def run_ids(self, repo, workflow, branch):
         q = f"branch={urllib.parse.quote(branch, safe='')}&event=workflow_dispatch&per_page=20"
@@ -584,6 +651,39 @@ class ApiForge:
                           dict(head=head, base=base, title=title, body=body, draft=draft), ok=(201,))["html_url"]
 
 
+def run_id_from_output(text):
+    m = re.search(r"/actions/runs/(\d+)", text or "")
+    return int(m.group(1)) if m else None
+
+
+class AnonForge:
+    """No gh and no token: enough for a dry run, which only clones public repos."""
+
+    def git_env(self):
+        return {}
+
+    def clone(self, repo, dest):
+        run("git", "clone", "--filter=blob:none", "--no-checkout", "--quiet", f"https://github.com/{ORG}/{repo}", str(dest))
+
+    def _need(self, what):
+        die(f"{what} needs GitHub access: install gh and log in (gh auth login), or set GH_TOKEN or GITHUB_TOKEN")
+
+    def dispatch(self, *a, **kw):
+        self._need("releasing")
+
+    def run_ids(self, *a, **kw):
+        self._need("releasing")
+
+    def run_info(self, *a, **kw):
+        self._need("releasing")
+
+    def find_pr(self, *a, **kw):
+        self._need("opening a pull request")
+
+    def create_pr(self, *a, **kw):
+        self._need("opening a pull request")
+
+
 def make_forge(force=None):
     kind = choose_forge(force=force)
     return GhForge() if kind == "gh" else ApiForge(os.environ.get("GH_TOKEN") or os.environ["GITHUB_TOKEN"])
@@ -591,16 +691,56 @@ def make_forge(force=None):
 
 # ---------- status report: the single output format ----------
 
-def line_of(repo, ref, file, key):
-    for i, line in enumerate(git(repo, "show", f"{ref}:{file}").split("\n"), 1):
-        if re.match(rf'\s*"?{re.escape(key)}"?\s*=', line):
+def find_line(text, key, table=None):
+    """1-based line of `key = ...` inside the named table (any table when None); 0 when absent."""
+    cur = None
+    for i, line in enumerate(text.split("\n"), 1):
+        h = re.match(r"\s*\[+([^\]]+)\]+\s*$", line)
+        if h:
+            cur = re.sub(r"[\"']", "", h.group(1)).strip()
+            if table and cur == f"{table}.{key}":  # [dependencies.key]
+                return i
+        elif (table is None or cur == table) and re.match(rf'\s*"?{re.escape(key)}"?\s*=', line):
             return i
     return 0
 
 
+def line_of(repo, ref, file, key, table=None):
+    return find_line(git(repo, "show", f"{ref}:{file}"), key, table)
+
+
 def edits(repo, branch, gs):
-    return [dict(file=g["file"], line=line_of(repo, f"origin/{branch}", g["file"], g["key"]), key=g["key"],
+    return [dict(file=g["file"], line=line_of(repo, f"origin/{branch}", g["file"], g["key"], g.get("table")), key=g["key"],
                  crate=g["crate"], current=g["req"], required=g["want"]) for g in gs]
+
+
+def resume_flags(a):
+    """The run settings a resume command repeats, shell-quoted."""
+    parts = []
+    if a.workspace:
+        parts += ["--workspace", str(a.workspace)]
+    if a.forge != "auto":
+        parts += ["--forge", a.forge]
+    if a.output != "json":
+        parts += ["-o", a.output]
+    if a.release_type != "patch":
+        parts += ["--release-type", a.release_type]
+    if a.max_releases is not None:
+        parts += ["--max-releases", str(a.max_releases)]
+    return shlex.join(parts)
+
+
+def parse_start(text):
+    repo, _, branch = text.partition("@")
+    if not repo or not branch:
+        die("--from needs REPO@BRANCH, for example edge-client@main")
+    return repo, branch
+
+
+def ask(prompt):
+    """Prompt on stderr, so stdout holds only the report."""
+    print(prompt, end="", file=sys.stderr, flush=True)
+    return input()
 
 
 def resume_command(start):
@@ -619,14 +759,14 @@ def operations(plan):
     for s in plan["steps"]:
         repin = None
         if s["gaps"]:
-            bumps = [] if s["todo"] else [dict(crate=c, file=s["files"][c], current=v, suggested=bump_patch(v))
-                                           for c, v in s["head"].items()]
+            bumps = [dict(crate=c, file=s["files"][c], current=s["head"][c], suggested=s["release_versions"][c])
+                     for c in s.get("bump_crates", [])]
             repin = new("repin", repo=s["repo"], branch=s["branch"], edits=edits(s["repo"], s["branch"], s["gaps"]),
                         version_bumps=bumps, depends_on=sorted({rel[g["crate"]] for g in s["gaps"] if g["crate"] in rel}),
                         description=f"repin {s['repo']}@{s['branch']} to the released versions"
                                     + (" and bump its version" if bumps else ""),
                         then="open a PR with these edits and a refreshed Cargo.lock, then merge it")
-        if s["todo"] or s["gaps"]:
+        if s["release_versions"]:
             crates = s["release_versions"]
             deps = {rel[c] for c in s.get("hard_requires", s["requires"]) if c in rel} | ({repin["id"]} if repin else set())
             op = new("release" if s["workflow"] else "release_manual", repo=s["repo"], branch=s["branch"],
@@ -638,7 +778,7 @@ def operations(plan):
             rel.update({c: op["id"] for c in crates})
     # the start repo's lock pins older versions even when its requirements already admit the new ones
     lock_updates = [dict(crate=c, locked=v, target=plan["target"][c]) for c, v in sorted(plan.get("locked", {}).items())
-                    if c in plan.get("target", {}) and ver(plan["target"][c]) > ver(v)]
+                    if c in plan.get("target", {}) and vkey(plan["target"][c]) > vkey(v)]
     pins = plan.get("pins", [])
     swaps = [dict(file=p["file"], line=p["line"], key=p["key"], crate=p["crate"], current=f"git {p['git']} {p['ref']}",
                   required=p["target"], swap="git_to_version") for p in pins if p["target"]]
@@ -938,16 +1078,17 @@ def release_step(s, release_type):
     tag = f"[{s['repo']}]"
     label = f"{s['repo']}@{s['branch']} ({', '.join(f'{n} {v}' for n, v in s['todo'].items())})"
     before = run_ids(s["repo"], s["workflow"], s["branch"])
-    FORGE.dispatch(s["repo"], s["workflow"], s["branch"], {"release_type": release_type})
-    new = set()
-    for _ in range(12):  # the run takes a few seconds to appear
-        time.sleep(5)
-        new = run_ids(s["repo"], s["workflow"], s["branch"]) - before
-        if new:
-            break
-    if len(new) != 1:
-        die(f"{s['repo']}: cannot identify the triggered run (new runs: {sorted(new)})")
-    rid = new.pop()
+    rid = FORGE.dispatch(s["repo"], s["workflow"], s["branch"], {"release_type": release_type})
+    if rid is None:  # no run id from the dispatch: take the one new run of this workflow and branch
+        new = set()
+        for _ in range(12):  # the run takes a few seconds to appear
+            time.sleep(5)
+            new = run_ids(s["repo"], s["workflow"], s["branch"]) - before
+            if new:
+                break
+        if len(new) != 1:
+            die(f"{s['repo']}: cannot identify the triggered run (new runs: {sorted(new)})")
+        rid = new.pop()
     log(f"{tag} triggered run {rid}: https://github.com/{ORG}/{s['repo']}/actions/runs/{rid}; waiting for '{PUBLISH_STEP}'")
     log(f"{tag} published by run {rid} (run status: {wait_publish_step(s['repo'], rid, s['todo'])}); checking crates.io")
     pending, deadline = dict(s["todo"]), time.time() + 10 * 60  # index lag; later steps resolve against it
@@ -961,14 +1102,15 @@ def release_step(s, release_type):
 
 
 def planned_crates(report):
-    """Crates of every release operation in the first plan of a run. Later plans add CI's post-release bumps; those stay out."""
-    return {c["name"] for o in report["operations"] if o["kind"].startswith("release") for c in o["crates"]}
+    """(name, version) of every release crate in the first plan of a run. A later plan can hold the same crate at a
+    new head, for example after a real commit follows a release; that version stays out of this run."""
+    return {(c["name"], c["version"]) for o in report["operations"] if o["kind"].startswith("release") for c in o["crates"]}
 
 
 def next_batch(report, planned, remaining):
     """Ready release operations that belong to the run's first plan, capped by `remaining` (None: no cap)."""
     batch = [o for o in report["operations"] if o["status"] == "ready" and o["kind"] == "release"
-             and all(c["name"] in planned for c in o["crates"])]
+             and all((c["name"], c["version"]) in planned for c in o["crates"])]
     return batch if remaining is None else batch[:max(remaining, 0)]
 
 
@@ -1005,16 +1147,18 @@ def main():
     a = ap.parse_args()
     if a.workspace:
         WORKSPACE = a.workspace.resolve()
-    repo, _, branch = a.start.partition("@")
-    if not branch:
-        die("--from needs REPO@BRANCH, for example edge-client@main")
-    start = (repo, branch)
-    RESUME_FLAGS = " ".join(filter(None, [f"--workspace {WORKSPACE}" if a.workspace else "",
-                                          f"--forge {a.forge}" if a.forge != "auto" else "",
-                                          f"-o {a.output}" if a.output != "json" else ""]))
-    report = None
+    RESUME_FLAGS = resume_flags(a)
+    start, report = (a.start, ""), None
     try:
-        FORGE = make_forge(None if a.forge == "auto" else a.forge)
+        start = parse_start(a.start)
+        repo, branch = start
+        try:
+            FORGE = make_forge(None if a.forge == "auto" else a.forge)
+        except Stop:
+            if a.execute or a.execute_no_release or a.forge != "auto":
+                raise
+            FORGE = AnonForge()  # a dry run only reads public repos and crates.io
+            log("no gh login and no GH_TOKEN or GITHUB_TOKEN: dry run only, with anonymous clones")
         plan = build_plan(repo, branch)
         report = status(plan)
         released, planned = 0, planned_crates(report)
@@ -1026,7 +1170,7 @@ def main():
                               for o in batch)
             if not a.yes:
                 try:
-                    ok = input(f"release {len(batch)} at once: {names}? type 'yes': ") == "yes"
+                    ok = ask(f"release {len(batch)} at once: {names}? type 'yes': ") == "yes"
                 except EOFError:
                     ok = False
                 if not ok:
@@ -1042,7 +1186,7 @@ def main():
             if todo and not a.yes:
                 names = "; ".join(f"{o['repo']}@{o['branch']} ({o['kind']})" for o in todo)
                 try:
-                    ok = input(f"open {len(todo)} draft PR(s): {names}? type 'yes': ") == "yes"
+                    ok = ask(f"open {len(todo)} draft PR(s): {names}? type 'yes': ") == "yes"
                 except EOFError:
                     ok = False
                 if not ok:
@@ -1054,6 +1198,8 @@ def main():
                 o["pull_request"] = result["url"]
     except Stop as e:
         report = error_report(start, str(e), e.state)
+    except Exception as e:  # a network error or a missing binary still ends in the documented error report
+        report = error_report(start, f"unexpected {type(e).__name__}: {e}")
     print(render(report, a.output))
     sys.exit(2 if report["state"] == "error" else 0)
 
