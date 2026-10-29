@@ -104,9 +104,9 @@ def log(*a):
     print(*a, file=sys.stderr, flush=True)
 
 
-def run(*a, check=True):
+def run(*a, check=True, cwd=None):
     env = {**os.environ, **FORGE.git_env()} if FORGE is not None and FORGE.git_env() else None
-    r = subprocess.run(a, capture_output=True, text=True, env=env)
+    r = subprocess.run(a, capture_output=True, text=True, env=env, cwd=cwd)
     if check and r.returncode:
         die(f"command failed: {' '.join(a)}\n{r.stderr.strip()}")
     return r.returncode, r.stdout
@@ -811,8 +811,8 @@ def pr_text(op, start):
 def in_shell(wt, cmds):
     """Run commands in the worktree, inside `nix develop` when the repo has a flake (toolchain and hooks)."""
     script = f"cd {shlex.quote(str(wt))} && " + " && ".join(cmds)
-    if (Path(wt) / "flake.nix").exists():
-        run("nix", "develop", str(wt), "-c", "bash", "-c", script)
+    if (Path(wt) / "flake.nix").exists():  # cwd matters: the shell hook (pre-commit setup) runs in the current directory
+        run("nix", "develop", str(wt), "-c", "bash", "-c", script, cwd=wt)
     else:
         run("bash", "-c", script)
 
@@ -820,7 +820,10 @@ def in_shell(wt, cmds):
 def hooked_git(wt, *args):
     """git in the worktree. With a flake it runs in `nix develop`, so the repo's pre-commit and pre-push hooks work."""
     cmd = ["git", "-C", str(wt), *args]
-    run(*(["nix", "develop", str(wt), "-c", *cmd] if (Path(wt) / "flake.nix").exists() else cmd))
+    if (Path(wt) / "flake.nix").exists():
+        run("nix", "develop", str(wt), "-c", *cmd, cwd=wt)
+    else:
+        run(*cmd)
 
 
 def apply_op(op, start, shell=None):
@@ -832,6 +835,15 @@ def apply_op(op, start, shell=None):
         return dict(operation=op["id"], repo=repo, base=base, branch=branch, url=existing, state="exists")
     wt = WORKSPACE / f"{repo}-worktrees" / branch.replace("/", "-")
     git(repo, "fetch", "-q", "origin")
+    title, body = pr_text(op, start)
+    if git(repo, "ls-remote", "--heads", "origin", branch).strip():  # pushed earlier, the PR step failed
+        url = FORGE.create_pr(repo, branch, base, title, body, draft=True)
+        return dict(operation=op["id"], repo=repo, base=base, branch=branch, url=url, state="opened")
+    if wt.exists() or git(repo, "branch", "--list", branch).strip():  # a failed attempt left this behind; nothing was pushed
+        git(repo, "worktree", "remove", "--force", str(wt), check=False)
+        shutil.rmtree(wt, ignore_errors=True)
+        git(repo, "worktree", "prune")
+        git(repo, "branch", "-D", branch, check=False)
     git(repo, "worktree", "add", "-q", "-b", branch, str(wt), f"origin/{base}")
     files = {}
     for kind, items, fn in (("edits", op.get("edits", []), edit_text), ("bumps", op.get("version_bumps", []), bump_text)):
@@ -841,7 +853,6 @@ def apply_op(op, start, shell=None):
     for f, text in files.items():
         (wt / f).write_text(text)
     shell(wt, lock_commands(op))
-    title, body = pr_text(op, start)
     hooked_git(wt, "add", "--", *files, *(["Cargo.lock"] if (wt / "Cargo.lock").exists() else []))
     hooked_git(wt, "commit", "-q", "-m", title, "-m", f"{body}\n\n{CO_AUTHOR}")
     hooked_git(wt, "push", "-q", "-u", "origin", branch)

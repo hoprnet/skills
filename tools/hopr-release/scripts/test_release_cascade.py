@@ -315,7 +315,11 @@ class GitFlow(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
         self.env = env
-        sh = lambda *a, cwd=None: subprocess.run(a, cwd=cwd, env=env, check=True, capture_output=True, text=True)
+        # every command runs inside the temporary directory, never in the repository the tests live in
+        def sh(*a, cwd=None):
+            where = cwd or (self.tmp / "hopr-api" if (self.tmp / "hopr-api").exists() else self.tmp)
+            assert str(where).startswith(str(self.tmp)), f"test command outside the temp dir: {where}"
+            return subprocess.run(a, cwd=where, env=env, check=True, capture_output=True, text=True)
         sh("git", "init", "-q", "--bare", "-b", "main", str(self.tmp / "origin.git"))
         sh("git", "clone", "-q", str(self.tmp / "origin.git"), str(self.tmp / "hopr-api"))
         repo = self.tmp / "hopr-api"
@@ -369,6 +373,27 @@ class GitFlow(unittest.TestCase):
         # the main branch is untouched
         main = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "show", "main:Cargo.toml").stdout
         self.assertIn('version = "4.1.0"', main)
+
+    def test_a_leftover_local_branch_and_worktree_from_a_failed_attempt_are_replaced(self):
+        op = ApplyOps().op()
+        branch = rc.branch_name(op)
+        wt = self.tmp / "hopr-api-worktrees" / branch.replace("/", "-")
+        self.sh("git", "worktree", "add", "-q", "-b", branch, str(wt), "origin/main")
+        (wt / "stray.txt").write_text("left over")
+        result = rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertEqual(result["state"], "opened")
+        shown = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "show", f"{branch}:Cargo.toml").stdout
+        self.assertIn('hopr-types = { version = "5.0.0"', shown)
+        self.assertFalse((wt / "stray.txt").exists())
+
+    def test_a_pushed_branch_with_no_pr_only_opens_the_pr(self):
+        op = ApplyOps().op()
+        branch = rc.branch_name(op)
+        self.sh("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+        result = rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertEqual((result["state"], result["url"]), ("opened", "https://github.com/hoprnet/hopr-api/pull/1"))
+        self.assertEqual(self.cmds, [])  # no edits, no cargo: the branch was already pushed
+        self.assertEqual(self.forge.prs[0][1], branch)
 
     def test_an_existing_open_pr_is_reported_and_nothing_is_pushed_again(self):
         self.forge.find_pr = lambda repo, head: "https://github.com/hoprnet/hopr-api/pull/9"
@@ -547,6 +572,39 @@ class BumpHeads(unittest.TestCase):
         r = rc.status(dict(plan([]), bump_heads=[dict(crate="hopr-types", head="2.3.3", published="2.3.2")]))
         self.assertEqual(r["bump_heads"], [dict(crate="hopr-types", head="2.3.3", published="2.3.2")])
         self.assertIn("hopr-types 2.3.3", rc.render(r, "plain"))
+
+
+class NixCwd(unittest.TestCase):
+    """`nix develop <path>` runs its shell hook in the current directory, so it must be the worktree."""
+
+    def test_commands_in_a_flake_worktree_run_with_the_worktree_as_cwd(self):
+        import tempfile
+        wt = Path(tempfile.mkdtemp())
+        (wt / "flake.nix").write_text("{}")
+        calls = []
+        saved = rc.run
+        rc.run = lambda *a, **kw: calls.append((a, kw)) or (0, "")
+        try:
+            rc.in_shell(wt, ["cargo metadata"])
+            rc.hooked_git(wt, "status")
+        finally:
+            rc.run = saved
+        self.assertEqual(len(calls), 2)
+        for args, kw in calls:
+            self.assertEqual(args[0], "nix")
+            self.assertEqual(kw.get("cwd"), wt)
+
+    def test_commands_without_a_flake_do_not_use_nix(self):
+        import tempfile
+        wt = Path(tempfile.mkdtemp())
+        calls = []
+        saved = rc.run
+        rc.run = lambda *a, **kw: calls.append(a) or (0, "")
+        try:
+            rc.hooked_git(wt, "status")
+        finally:
+            rc.run = saved
+        self.assertEqual(calls[0][0], "git")
 
 
 class Layers(unittest.TestCase):
