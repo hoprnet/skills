@@ -53,54 +53,66 @@ re-land), and its own downstream repin to the matching line.
 
 ## Publishing the crates.io crates, leaf to root
 
-Step 5 above assumes the crate is already on crates.io. When several library crates need
-a release (hopr-types, hopr-api, hopr-utilities, hopr-impls, hopr-strategy, blokli-client),
-publish them in dependency order, once per release line, then repin hoprd and edge-client.
-`scripts/release-cascade.py` plans and drives this; the graph lives in `configs/`.
+Step 5 above assumes the crate is already on crates.io. When a repo depends on org crates
+that need a release, `scripts/release-cascade.py` plans and drives the cascade from that
+repo:
 
-| Line | Config | Library branch | Root repos (repinned last) |
-| --- | --- | --- | --- |
-| v5 | `configs/release-cascade.v5.yaml` | `main` | `edge-client` `main`, `hoprd` `main` |
-| v4 | `configs/release-cascade.v4.yaml` | `compat/v4` | `edge-client` `release/4.1`, `hoprd` `release/4.1` |
+```
+release-cascade.py --from edge-client@main            # v5 line, dry run
+release-cascade.py --from edge-client@release/4.1     # v4 line, dry run
+release-cascade.py --from edge-client@main --execute  # release every ready step
+```
 
-Run the script from the directory that holds the repo clones, or pass `--workspace`:
+Run it from the directory that holds the repo clones, or pass `--workspace`. Missing org
+repos are cloned there (partial clone). No config file exists: each run derives the graph.
 
-1. Plan (dry run, triggers nothing): `release-cascade.py --line v4`. It fetches each
-   clone, compares the version at each branch head with crates.io, and prints the
-   `gh workflow run` commands and the root-repo requirements that are behind.
-2. Check what the plan cannot: that each repo's own requirements already name the new
-   versions of the crates above it (for example hopr-api on `hopr-types` 5.x).
-3. Release: `release-cascade.py --line v4 --execute`. It asks `yes` before each step,
-   triggers the repo's release workflow, and continues once the run's `Publish library`
-   step succeeds and the crates show on crates.io. A later failure in the same run (for
-   example `Close release`) does not block the next step. A failed publish step stops
-   the cascade.
-4. Repin by hand: open PRs in `edge-client` and `hoprd` that raise the requirements the
-   plan listed and refresh `Cargo.lock`. Keep requirements compatible with the pinned
-   hoprnet rev, or two copies of `hopr-api`/`hopr-types` end up on either side of the
-   strategy boundary.
-5. Regenerate the configs when the dependency graph changes. They are built from the
-   `Cargo.lock` of the top repos, `edge-client` and `hoprd`, so they cover everything
-   either one consumes: `release-cascade.py --regenerate` builds v5 from their default
-   branches and v4 from their highest common `release/X.Y` branch (override with
-   `--release-branch`). `--regenerate --default-only` builds v5 alone.
+1. **Discover.** Read `Cargo.lock` at the start branch and walk the graph. A crate is an
+   org crate when crates.io lists its `repository` under `github.com/hoprnet`. Lookups are
+   cached in `~/.cache/hopr-release/`, one request per second. A crate whose repo is not
+   accessible becomes a fixed input with a warning.
+2. **Map crates to repos and branches.** The default branch as start gives every repo's
+   default branch. A `release/X.Y` start gives `compat/vX`, else `release/vX`. A repo with
+   no such branch is a fixed input, only checked to be on crates.io and not yanked.
+   `hopr-bindings` comes from `hoprnet/contracts` this way.
+3. **Order from the branch heads.** A repo comes after every repo whose crates it requires.
+4. **Block on stale requirements.** A step is `blocked_repin` while its repo's requirements
+   do not admit the versions released below it. The report lists file, line, current and
+   required requirement. Open a PR with those edits and a refreshed `Cargo.lock`, merge it,
+   and run the script again.
+5. **Release.** `--execute` asks `yes` before each step, runs the repo's release workflow,
+   and continues once the run's `Publish library` step succeeds and the crates show on
+   crates.io. A later failure in the same run (for example `Close release`) does not
+   block the next step. A repo with no release workflow is a manual step.
+6. **Repin the start repo** last, with the same kind of PR.
 
-Facts the configs encode, as of 2026-10-29:
+### Output
 
-- **Fixed inputs.** `hopr-bindings` is published from `hoprnet/contracts`. On v4,
-  `blokli-client` 0.31.0 is a fixed published input: `blokli-client` has no v4 branch
-  (the `blokli` repo's `release/0.11`..`0.14` branches are the server). The plan only
-  checks fixed inputs exist and are not yanked. v4 locks pinned `hopr-bindings` 4.13.0,
-  which is yanked.
-- **Git-pinned crates are out of scope.** `hopr-lib`, `hopr-transport` and the other
-  hoprnet crates are git dependencies in edge-client and hoprd. Moving them is a repin
-  (steps 1 to 4 above), not a crates.io release.
-- **Publish goes through the shared workflow.** The step named `Publish library` in
-  `hoprnet/hopr-workflows` `build-library.yaml` runs `cargo release publish --execute`.
-  hopr-impls is a virtual workspace: its release publishes only the crates whose version
-  is not yet on crates.io.
+stdout is always one JSON document, schema `hopr-release-cascade/v1`. Progress goes to
+stderr. Exit code 0 for every state except `error` (2). Read these fields:
 
-Sources: `.github/workflows/release.yaml` and `release-library.yaml` in `hopr-types`,
-`hopr-api`, `hopr-utilities`, `hopr-impls`, `hopr-strategy`, `blokli-client`;
+| Field | Meaning |
+| --- | --- |
+| `state` | `release_ready`, `repin_required`, `final_repin_required`, `manual_release_required`, `complete`, `paused`, `error` |
+| `summary` | One sentence on where the cascade stands. |
+| `steps` | Per repo in release order: `status` (`published`, `ready`, `blocked_repin`), crates with `on_crates_io`, `repin_edits`. |
+| `next` | The single next action: `release` (command, crates), `release_manual`, `repin` (edits), or `none`. |
+| `conditions` | What must hold before the cascade continues, each with a `verify` command. |
+| `resume` | The command to run once the conditions hold. `null` when complete. |
+| `fixed_inputs`, `git_pinned_out_of_scope`, `warnings` | Inputs only checked on crates.io, org crates pinned by git (repin, not released), and gaps such as a repo that does not consume a new version. |
+
+The cascade pauses between releases whenever a repin PR must merge. After the merge, run
+the `resume` command. Each run reads the branch heads and crates.io again, so the report
+always reflects the current state.
+
+Facts that shape the cascade, as of 2026-10-29:
+
+- `hopr-lib`, `hopr-transport` and the other hoprnet crates are git dependencies in
+  edge-client and hoprd. Moving them is a repin (steps 1 to 4 above), not a release.
+- hopr-impls is a virtual workspace with independent crate versions. Its release
+  publishes only the crates whose version is not yet on crates.io.
+- The step named `Publish library` in `hoprnet/hopr-workflows` `build-library.yaml` runs
+  `cargo release publish --execute`. It is the same step in `hoprnet/contracts`.
+
+Sources: `.github/workflows/release*.yaml` in the library repos and `hoprnet/contracts`;
 `.github/workflows/build-library.yaml` in `hoprnet/hopr-workflows`; crates.io API
 (`https://crates.io/api/v1/crates/<name>`).
