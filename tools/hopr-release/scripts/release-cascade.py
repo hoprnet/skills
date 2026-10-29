@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Release the unpublished org crates a repo depends on, leaf to root, then report the repin.
 
-  release-cascade.py --from edge-client@main
-  release-cascade.py --from hoprd@release/4.1 --execute
+  release-cascade.py --from edge-client@main                         dry run, JSON
+  release-cascade.py --from edge-client@main -o plain                dry run, text
+  release-cascade.py --from hoprd@release/4.1 --execute              release, then open repin PRs
+  release-cascade.py --from hoprd@release/4.1 --execute-no-release   open repin PRs only
 
 The start repo and branch choose the release line. The script reads that branch's
 Cargo.lock, walks the dependency graph, and asks crates.io which crates have their
@@ -28,19 +30,34 @@ plan, because CI bumps each head after a release. --max-releases N caps the repo
 A step is blocked while a repo's own requirements do not admit the versions released below
 it. Repin that repo first. A release publishes to crates.io and cannot be undone.
 
+Git-ref pins. A dependency of the start repo pinned to a git ref of an org repo (git = ...,
+branch/rev/tag = ...) is planned for a swap to a released version. When crates.io has a
+version at or above the locked one, the swap joins the final operation. Otherwise a
+`pin_swap` operation is `blocked` and says why. [patch] git entries are only warned about.
+
+--execute-no-release. For each ready repin or final operation: create a branch in a git
+worktree (<workspace>/<repo>-worktrees/), edit Cargo.toml (requirements, version bumps, git
+pins), refresh Cargo.lock (cargo, inside `nix develop` when the repo has a flake, so hooks
+run), commit, push, and open a draft PR. It asks `yes` once (--yes skips it). It never
+merges and never releases. A branch name is derived from the edits, so a re-run finds the
+open PR and does not push a second one. --execute does the releases first, then the same.
+
 Output. -o json (default) prints one indented JSON document, -o mjson the same minified on
 one line, -o plain a text rendering. Schema "hopr-release-cascade/v2"; progress goes to stderr. The dry run lists every operation to do, so a bot can propagate the repins,
 turn the list into a workflow, or run the releases. Fields:
   state            release_ready | repin_required | final_repin_required
-                   | manual_release_required | complete | paused | error
+                   | manual_release_required | blocked | complete | paused | error
   summary          one sentence on where the cascade stands
   repos_to_update  repo, branch, its operation ids, needs_pr, crates it releases
   crates_to_change crate, version to publish, repo, branch, republish, operation id
   operations       the full ordered list, leaf first. Each has id, kind, repo, branch, status
-                   (ready | pending), depends_on, description, and per kind:
+                   (ready | pending | blocked), depends_on, description, and per kind:
                    release / release_manual: crates, workflow, command, republish
                    repin: edits (file, line, key, current, required), version_bumps, then
-                   final_repin: edits, lock_updates (crate, locked, target), then
+                   final_repin: edits (also git-pin swaps), lock_updates (crate, locked, target), then
+                   pin_swap: blocked_reason (a git pin with no published version yet)
+  pull_requests    draft PRs opened or found by --execute / --execute-no-release
+                   (operation, repo, base, branch, url, state opened | exists)
   ready_operations ids that can run now (no unfinished dependency)
   layers           operation ids per layer. An operation's layer is 1 + the highest layer of its
                    depends_on; operations in one layer are independent (concurrency_group
@@ -52,7 +69,7 @@ turn the list into a workflow, or run the releases. Fields:
 Exit code: 0 for every state except error (2).
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import argparse, base64, datetime, json, os, re, shutil, subprocess, sys, time, tomllib, urllib.parse, urllib.request, urllib.error
+import argparse, base64, datetime, hashlib, json, shlex, os, re, shutil, subprocess, sys, time, tomllib, urllib.parse, urllib.request, urllib.error
 from pathlib import Path
 
 ORG = "hoprnet"
@@ -64,6 +81,7 @@ CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "hopr-r
 WORKSPACE = Path.cwd()
 SCHEMA = "hopr-release-cascade/v2"
 FORGE = None  # GhForge or ApiForge, chosen in main()
+RESUME_FLAGS = ""  # flags the resume command repeats, set in main()
 
 
 class Stop(Exception):
@@ -83,9 +101,7 @@ def log(*a):
 
 
 def run(*a, check=True):
-    env = None
-    if a and a[0] == "git" and FORGE is not None and FORGE.git_env():
-        env = {**os.environ, **FORGE.git_env()}
+    env = {**os.environ, **FORGE.git_env()} if FORGE is not None and FORGE.git_env() else None
     r = subprocess.run(a, capture_output=True, text=True, env=env)
     if check and r.returncode:
         die(f"command failed: {' '.join(a)}\n{r.stderr.strip()}")
@@ -195,6 +211,13 @@ def published_versions(crate):
     return [v["num"] for v in (crates_io(crate) or {"versions": []})["versions"] if not v["yanked"]]
 
 
+def pick_latest_compatible(versions, head):
+    """Highest release in `versions` on the same breaking line as `head` (same major, or same minor for 0.x)."""
+    a, b, _ = (ver(head) + (0, 0, 0))[:3]
+    same = [v for v in versions if "-" not in v and (ver(v) + (0, 0, 0))[:1] == (a,) and (a > 0 or (ver(v) + (0, 0, 0))[1] == b)]
+    return max(same, key=ver) if same else None
+
+
 def hard_needs(entries, own, releasing, published=published_versions):
     """Crates this repo must wait for: ones being released whose requirement no published version meets."""
     cache, out = {}, set()
@@ -235,6 +258,32 @@ def dep_entries(ms):
                 table(f, tgt.get(t))
         table(f, m.get("workspace", {}).get("dependencies"))
     return out
+
+
+def git_pins(ms):
+    """Dependencies pinned to a git ref of an org repo: {file, key, crate, git, ref}."""
+    out = []
+
+    def table(file, t):
+        for key, spec in (t or {}).items():
+            if isinstance(spec, dict) and f"github.com/{ORG}/" in spec.get("git", "").lower():
+                ref = next((f"{k} {spec[k]}" for k in ("branch", "rev", "tag") if k in spec), "default branch")
+                out.append(dict(file=file, key=key, crate=spec.get("package", key), git=spec["git"], ref=ref))
+
+    for f, m in ms.items():
+        for t in DEP_TABLES:
+            table(f, m.get(t))
+        for tgt in m.get("target", {}).values():
+            for t in DEP_TABLES:
+                table(f, tgt.get(t))
+        table(f, m.get("workspace", {}).get("dependencies"))
+    return out
+
+
+def patch_pins(ms):
+    """Crates with a git entry under [patch.*]. The script does not edit those."""
+    return sorted({spec.get("package", key) for m in ms.values() for reg in m.get("patch", {}).values()
+                   for key, spec in reg.items() if isinstance(spec, dict) and f"github.com/{ORG}/" in spec.get("git", "").lower()})
 
 
 def admits(req, v):
@@ -278,7 +327,7 @@ def discover(repo, branch):
         c = byname[x[0]]
         return ([p for p in c if p["version"] == x[1]] if len(x) > 1 else c)[0]
 
-    owned, pinned, seen = {}, set(), set()
+    owned, pinned, seen = {}, {}, set()
     stack = [p for p in pk if "source" not in p]  # the start repo's own packages
     while stack:
         n = stack.pop()
@@ -291,7 +340,7 @@ def discover(repo, branch):
             src = c.get("source", "")
             if src.startswith("git+"):
                 if f"github.com/{ORG}/" in src.lower():
-                    pinned.add(c["name"])
+                    pinned[c["name"]] = c["version"]
                 stack.append(c)
             elif src.startswith("registry+"):
                 r = org_repo_of(c["name"])
@@ -321,7 +370,9 @@ def release_workflow(repo, branch):
     return names[0] if names else None  # None: no automated release, the plan reports a manual step
 
 
-def build_plan(start_repo, start_branch):
+def build_plan(start_repo, start_branch, planned=None):
+    """`planned`: crates of the run's first plan. A later plan treats other unpublished heads, the version bumps CI
+    pushes after a release, as the newest published version, so lock updates target versions that exist."""
     ensure(start_repo)
     if not has_ref(start_repo, start_branch):
         die(f"{start_repo}: no branch origin/{start_branch}")
@@ -367,6 +418,10 @@ def build_plan(start_repo, start_branch):
         s = plan[k]
         s["requires"] = sorted({e["crate"] for e in s["entries"] if e["crate"] in crate_step and crate_step[e["crate"]] != k})
         s["todo"] = {c: v for c, v in s["head"].items() if not is_published(c, v)}
+        if planned is not None:
+            for c in [c for c in s["todo"] if c not in planned]:
+                del s["todo"][c]
+                target[c] = pick_latest_compatible(published_versions(c), s["head"][c]) or s["head"][c]
         s["gaps"] = gaps(s["entries"], target, owned)
         # a repo whose head is published but whose requirements lag must be bumped and released again
         s["republish"] = bool(s["gaps"]) and not s["todo"]
@@ -374,8 +429,17 @@ def build_plan(start_repo, start_branch):
         s["hard_requires"] = hard_needs(s["entries"], set(s["crates"]), releasing)
         releasing |= set(s["release_versions"])
         target.update(s["release_versions"])  # leaf first, so downstream repos see the version that will exist
-    start_entries = dep_entries(manifests(start_repo, f"origin/{start_branch}"))
-    return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned),
+    start_ms = manifests(start_repo, f"origin/{start_branch}")
+    start_entries = dep_entries(start_ms)
+    pins = []
+    for pin in git_pins(start_ms):
+        locked = pinned.get(pin["crate"])
+        swap_to = pick_latest_compatible(published_versions(pin["crate"]), locked) if locked else None
+        if swap_to and ver(swap_to) < ver(locked):
+            swap_to = None
+        pins.append(dict(pin, line=line_of(start_repo, f"origin/{start_branch}", pin["file"], pin["key"]), locked=locked, target=swap_to))
+    return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned), pins=pins,
+                patched=patch_pins(start_ms),
                 repin=gaps(start_entries, target, owned), locked={c: v for c, (_, v) in owned.items()}, target=target)
 
 
@@ -411,6 +475,10 @@ class GhForge:
 
     def clone(self, repo, dest):
         run("gh", "repo", "clone", f"{ORG}/{repo}", str(dest), "--", "--filter=blob:none", "--no-checkout", "--quiet")
+
+    def find_pr(self, repo, head):
+        rows = json.loads(run("gh", "pr", "list", "--repo", f"{ORG}/{repo}", "--head", head, "--state", "open", "--json", "url")[1] or "[]")
+        return rows[0]["url"] if rows else None
 
     def dispatch(self, repo, workflow, ref, inputs):
         run("gh", "workflow", "run", workflow, "--repo", f"{ORG}/{repo}", "--ref", ref,
@@ -468,6 +536,10 @@ class ApiForge:
     def clone(self, repo, dest):
         run("git", "clone", "--filter=blob:none", "--no-checkout", "--quiet", f"https://github.com/{ORG}/{repo}", str(dest))
 
+    def find_pr(self, repo, head):
+        rows = self._call("GET", f"/repos/{ORG}/{repo}/pulls?head={ORG}:{urllib.parse.quote(head, safe='')}&state=open")
+        return rows[0]["html_url"] if rows else None
+
     def dispatch(self, repo, workflow, ref, inputs):
         self._call("POST", f"/repos/{ORG}/{repo}/actions/workflows/{workflow}/dispatches", {"ref": ref, "inputs": inputs}, ok=(204,))
 
@@ -508,7 +580,7 @@ def edits(repo, branch, gs):
 
 
 def resume_command(start):
-    return f"python3 {Path(sys.argv[0]).resolve()} --from {start[0]}@{start[1]} --execute"
+    return f"python3 {Path(sys.argv[0]).resolve()} --from {start[0]}@{start[1]}" + (f" {RESUME_FLAGS}" if RESUME_FLAGS else "") + " --execute"
 
 
 def operations(plan):
@@ -543,17 +615,27 @@ def operations(plan):
     # the start repo's lock pins older versions even when its requirements already admit the new ones
     lock_updates = [dict(crate=c, locked=v, target=plan["target"][c]) for c, v in sorted(plan.get("locked", {}).items())
                     if c in plan.get("target", {}) and ver(plan["target"][c]) > ver(v)]
-    if plan["repin"] or lock_updates:
+    pins = plan.get("pins", [])
+    swaps = [dict(file=p["file"], line=p["line"], key=p["key"], crate=p["crate"], current=f"git {p['git']} {p['ref']}",
+                  required=p["target"], swap="git_to_version") for p in pins if p["target"]]
+    if plan["repin"] or lock_updates or swaps:
         sr, sb = plan["start"]
         named = {g["crate"] for g in plan["repin"]} | {u["crate"] for u in lock_updates}
-        new("final_repin", repo=sr, branch=sb, edits=edits(sr, sb, plan["repin"]), lock_updates=lock_updates,
+        new("final_repin", repo=sr, branch=sb, edits=edits(sr, sb, plan["repin"]) + swaps, lock_updates=lock_updates,
             version_bumps=[], depends_on=sorted({rel[c] for c in named if c in rel}),
             description=f"update {sr}@{sb} to the released versions"
                         + (f" (cargo update -p {' -p '.join(u['crate'] for u in lock_updates)})" if lock_updates else ""),
             then="open a PR with the requirement edits and a refreshed Cargo.lock, then merge it")
+    for p in pins:
+        if not p["target"]:
+            sr, sb = plan["start"]
+            new("pin_swap", repo=sr, branch=sb, edits=[], crates=[p["crate"]], depends_on=[],
+                description=f"swap the git pin of {p['crate']} ({p['ref']}) for a released version",
+                blocked_reason=f"{p['crate']} has no published version >= {p['locked']} on crates.io; release it first, "
+                               f"then this pin can become a version requirement")
     layer = {}
     for op in ops:  # dependencies come before their dependents in the list
-        op["status"] = "pending" if op["depends_on"] else "ready"
+        op["status"] = "blocked" if op["kind"] == "pin_swap" else "pending" if op["depends_on"] else "ready"
         layer[op["id"]] = 1 + max((layer[d] for d in op["depends_on"]), default=0)
         op["layer"], op["concurrency_group"] = layer[op["id"]], f"layer-{layer[op['id']]}"
     return ops
@@ -573,7 +655,7 @@ def conditions_for(op, resume):
         return [dict(id="on_crates_io", description="every listed crate version shows on crates.io",
                      verify="; ".join(f"curl -s https://crates.io/api/v1/crates/{c['name']}/{c['version']}" for c in op["crates"]))]
     return [dict(id="repin_merged", description=f"the repin PR is merged into {op['repo']}@{op['branch']}",
-                 verify=f"{resume} without --execute; operation {op['id']} must be gone from the list")]
+                 verify=f"{resume.replace(' --execute', '')} (dry run); operation {op['id']} must be gone from the list")]
 
 
 def status(plan):
@@ -582,6 +664,8 @@ def status(plan):
     ops = operations(plan)
     fixed = [dict(f, on_crates_io=is_published(f["crate"], f["version"])) for f in plan["fixed"]]
     warnings = [f"fixed input {f['crate']} {f['version']} is missing or yanked on crates.io" for f in fixed if not f["on_crates_io"]]
+    warnings += [f"[patch] entry for {c} is a git pin the script does not edit; remove it by hand once {c} is released"
+                 for c in plan.get("patched", [])]
     repos = {}
     for op in ops:
         repos.setdefault((op["repo"], op["branch"]), []).append(op)
@@ -599,6 +683,11 @@ def status(plan):
         state = STATE[first["kind"]]
         summary = f"{len(ops)} operations across {len(repos_to_update)} repos; next: {first['description']}"
         nxt, conditions = first, conditions_for(first, resume)
+    elif any(o["status"] == "blocked" for o in ops):
+        blocked = [o for o in ops if o["status"] == "blocked"]
+        state = "blocked"
+        summary = f"{len(blocked)} operation(s) blocked: " + "; ".join(o["blocked_reason"] for o in blocked[:3])
+        nxt, conditions = dict(kind="none"), []
     else:
         state, summary = "complete", "every crate is released and the start repo requirements are current"
         nxt, conditions = dict(kind="none"), []
@@ -607,6 +696,7 @@ def status(plan):
                 repos_to_update=repos_to_update, crates_to_change=crates_to_change, operations=ops,
                 ready_operations=[o["id"] for o in ready],
                 layers=[[o["id"] for o in ops if o["layer"] == n] for n in sorted({o["layer"] for o in ops})],
+                pull_requests=[],
                 next=nxt, conditions=conditions,
                 fixed_inputs=fixed, git_pinned_out_of_scope=plan["pinned"], warnings=warnings,
                 resume=resume if state != "complete" else None)
@@ -615,11 +705,129 @@ def status(plan):
 def error_report(start, msg, state="error"):
     return dict(schema=SCHEMA, generated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                 start=dict(repo=start[0], branch=start[1]), state=state, summary=msg, repos_to_update=[],
-                crates_to_change=[], operations=[], ready_operations=[], layers=[], next=dict(kind="none"), conditions=[],
+                crates_to_change=[], operations=[], ready_operations=[], layers=[], pull_requests=[], next=dict(kind="none"), conditions=[],
                 fixed_inputs=[], git_pinned_out_of_scope=[], warnings=[], resume=resume_command(start))
 
 
+# ---------- applying repins in a git worktree (--execute-no-release) ----------
+
+CO_AUTHOR = "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+
+
+def new_req(current, want):
+    """The requirement text for `want`, keeping a leading = ~ ^ and replacing a range with the plain version."""
+    m = re.fullmatch(r"\s*(=|~|\^)?\s*\d[\w.+-]*\s*", current)
+    return (m.group(1) or "") + want if m else want
+
+
+def swap_git_text(text, e):
+    """Replace a git pin on one line with a version requirement, keeping features and the other keys."""
+    lines = text.split("\n")
+    i = e["line"] - 1
+    found = lines[i] if 0 <= i < len(lines) else "(no such line)"
+    if "git" not in found or e["key"] not in found or "{" not in found:
+        die(f"{e['file']}:{e['line']}: expected an inline git pin for {e['key']}, found: {found.strip()}")
+    out = re.sub(r'\bgit\s*=\s*"[^"]*"\s*,?\s*', "", found, count=1)
+    out = re.sub(r'\b(?:branch|rev|tag)\s*=\s*"[^"]*"\s*,?\s*', "", out, count=1)
+    ver_kv = f'version = "{e["required"]}"'
+    out = re.sub(r"\{\s*\}", "{ " + ver_kv + " }", out, count=1) if re.search(r"\{\s*\}", out) else \
+        re.sub(r"\{\s*", "{ " + ver_kv + ", ", out, count=1)
+    lines[i] = re.sub(r",\s*,", ",", out)
+    return "\n".join(lines)
+
+
+def edit_text(text, e):
+    if e.get("swap") == "git_to_version":
+        return swap_git_text(text, e)
+    lines = text.split("\n")
+    i = e["line"] - 1
+    found = lines[i] if 0 <= i < len(lines) else "(no such line)"
+    if f'"{e["current"]}"' not in found or e["key"] not in found:
+        die(f"{e['file']}:{e['line']}: expected {e['key']} with \"{e['current']}\", found: {found.strip()}")
+    lines[i] = found.replace(f'"{e["current"]}"', f'"{new_req(e["current"], e["required"])}"', 1)
+    return "\n".join(lines)
+
+
+def bump_text(text, b):
+    """Set the package version, in [package] or [workspace.package] only."""
+    lines, table = text.split("\n"), None
+    for i, line in enumerate(lines):
+        h = re.match(r"\s*\[([^\]]+)\]\s*$", line)
+        if h:
+            table = h.group(1)
+        elif table in ("package", "workspace.package") and re.match(rf'\s*version\s*=\s*"{re.escape(b["current"])}"', line):
+            lines[i] = line.replace(f'"{b["current"]}"', f'"{b["suggested"]}"', 1)
+            return "\n".join(lines)
+    return die(f"{b['file']}: no package version \"{b['current']}\" to bump for {b['crate']}")
+
+
+def lock_commands(op):
+    cmds = ["cargo metadata --format-version 1 >/dev/null"]  # rewrites the lock for the edited requirements and versions
+    cmds += [f"cargo update -p {c}" for c in dict.fromkeys(e["crate"] for e in op.get("edits", []))]
+    cmds += [f"cargo update -p {u['crate']}@{u['locked']} --precise {u['target']}" for u in op.get("lock_updates", [])]
+    return cmds
+
+
+def branch_name(op):
+    digest = hashlib.sha1(json.dumps([op.get("edits"), op.get("version_bumps"), op.get("lock_updates")], sort_keys=True).encode()).hexdigest()[:8]
+    return f"chore/release-cascade-{op['kind']}-{digest}"
+
+
+def pr_text(op, start):
+    crates = list(dict.fromkeys([e["crate"] for e in op.get("edits", [])] + [u["crate"] for u in op.get("lock_updates", [])]))
+    title = f"chore(deps): {'repin' if op.get('edits') else 'update'} {', '.join(crates)} to the released versions"
+    lines = [f"Part of the release cascade from {start[0]}@{start[1]}. Merge after the releases below are on crates.io.", ""]
+    lines += [f"- {e['file']}:{e['line']}: {e['key']} {e['current']} -> {e['required']}" for e in op.get("edits", [])]
+    lines += [f"- bump {b['crate']} {b['current']} -> {b['suggested']} ({b['file']})" for b in op.get("version_bumps", [])]
+    lines += [f"- lock: {u['crate']} {u['locked']} -> {u['target']}" for u in op.get("lock_updates", [])]
+    lines += ["", f"Operation {op['id']} ({op['kind']}). Generated by hopr-release's release-cascade.py."]
+    return title, "\n".join(lines)
+
+
+def in_shell(wt, cmds):
+    """Run commands in the worktree, inside `nix develop` when the repo has a flake (toolchain and hooks)."""
+    script = f"cd {shlex.quote(str(wt))} && " + " && ".join(cmds)
+    if (Path(wt) / "flake.nix").exists():
+        run("nix", "develop", str(wt), "-c", "bash", "-c", script)
+    else:
+        run("bash", "-c", script)
+
+
+def hooked_git(wt, *args):
+    """git in the worktree. With a flake it runs in `nix develop`, so the repo's pre-commit and pre-push hooks work."""
+    cmd = ["git", "-C", str(wt), *args]
+    run(*(["nix", "develop", str(wt), "-c", *cmd] if (Path(wt) / "flake.nix").exists() else cmd))
+
+
+def apply_op(op, start, shell=None):
+    """Apply a repin or final repin in a new worktree branch, commit, push, open a draft PR. Never merges."""
+    shell = shell or in_shell
+    repo, base, branch = op["repo"], op["branch"], branch_name(op)
+    existing = FORGE.find_pr(repo, branch)
+    if existing:
+        return dict(operation=op["id"], repo=repo, base=base, branch=branch, url=existing, state="exists")
+    wt = WORKSPACE / f"{repo}-worktrees" / branch.replace("/", "-")
+    git(repo, "fetch", "-q", "origin")
+    git(repo, "worktree", "add", "-q", "-b", branch, str(wt), f"origin/{base}")
+    files = {}
+    for kind, items, fn in (("edits", op.get("edits", []), edit_text), ("bumps", op.get("version_bumps", []), bump_text)):
+        for item in items:
+            path = wt / item["file"]
+            files[item["file"]] = fn(files.get(item["file"]) or path.read_text(), item)
+    for f, text in files.items():
+        (wt / f).write_text(text)
+    shell(wt, lock_commands(op))
+    title, body = pr_text(op, start)
+    hooked_git(wt, "add", "--", *files, *(["Cargo.lock"] if (wt / "Cargo.lock").exists() else []))
+    hooked_git(wt, "commit", "-q", "-m", title, "-m", f"{body}\n\n{CO_AUTHOR}")
+    hooked_git(wt, "push", "-q", "-u", "origin", branch)
+    url = FORGE.create_pr(repo, branch, base, title, body, draft=True)
+    return dict(operation=op["id"], repo=repo, base=base, branch=branch, url=url, state="opened", worktree=str(wt))
+
+
 def op_detail(o):
+    if o.get("blocked_reason"):
+        return f"blocked: {o['blocked_reason']}"
     if o["kind"].startswith("release"):
         return ", ".join(f"{c['name']} {c['version']}" for c in o["crates"])
     parts = [f"{e['key']} {e['current']} -> {e['required']}" for e in o.get("edits", [])]
@@ -639,6 +847,8 @@ def render_plain(r):
             deps = f" after {','.join(o['depends_on'])}" if o["depends_on"] else ""
             out.append(f"  {o['id']:<6}{o['concurrency_group']:<9}{o['status']:<8}{o['kind']:<15}"
                        f"{o['repo']}@{o['branch']}{deps}: {op_detail(o)}")
+    for pr in r.get("pull_requests", []):
+        out.append(f"pull request ({pr['state']}): {pr['url']} {pr['repo']} {pr['branch']} -> {pr['base']}")
     for c in r["conditions"]:
         out += [f"condition {c['id']}: {c['description']}", f"  verify: {c['verify']}"]
     for f in r["fixed_inputs"]:
@@ -741,7 +951,7 @@ def release_batch(steps, release_type):
 
 
 def main():
-    global WORKSPACE, FORGE
+    global WORKSPACE, FORGE, RESUME_FLAGS
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--from", dest="start", required=True, metavar="REPO@BRANCH", help="repo and branch to release for")
     ap.add_argument("-o", "--output", default="json", choices=["json", "mjson", "plain"],
@@ -750,7 +960,9 @@ def main():
                     help="auto: gh when installed and logged in, else the REST API with GH_TOKEN or GITHUB_TOKEN")
     ap.add_argument("--workspace", type=Path, help="directory holding the repo clones (default: current directory)")
     ap.add_argument("--execute", action="store_true", help="trigger the release workflows")
-    ap.add_argument("--yes", action="store_true", help="skip the confirmation prompt (with --execute)")
+    ap.add_argument("--execute-no-release", action="store_true",
+                    help="no releases: apply each ready repin or lock update in a git worktree, commit, push and open a draft PR")
+    ap.add_argument("--yes", action="store_true", help="skip the confirmation prompts (with --execute or --execute-no-release)")
     ap.add_argument("--max-releases", type=int, metavar="N", help="with --execute: release at most N repos in this run")
     ap.add_argument("--release-type", default="patch", choices=["rc", "patch", "minor", "major"],
                     help="version type after release, passed to the workflow")
@@ -761,6 +973,9 @@ def main():
     if not branch:
         die("--from needs REPO@BRANCH, for example edge-client@main")
     start = (repo, branch)
+    RESUME_FLAGS = " ".join(filter(None, [f"--workspace {WORKSPACE}" if a.workspace else "",
+                                          f"--forge {a.forge}" if a.forge != "auto" else "",
+                                          f"-o {a.output}" if a.output != "json" else ""]))
     report = None
     try:
         FORGE = make_forge(None if a.forge == "auto" else a.forge)
@@ -784,8 +999,23 @@ def main():
             by_key = {(st["repo"], st["branch"]): st for st in plan["steps"]}
             release_batch([by_key[(o["repo"], o["branch"])] for o in batch], a.release_type)
             released += len(batch)
-            plan = build_plan(repo, branch)  # re-read heads and crates.io
+            plan = build_plan(repo, branch, planned)  # re-read heads and crates.io
             report = status(plan)
+        if a.execute or a.execute_no_release:
+            todo = [o for o in report["operations"] if o["status"] == "ready" and o["kind"] in ("repin", "final_repin")]
+            if todo and not a.yes:
+                names = "; ".join(f"{o['repo']}@{o['branch']} ({o['kind']})" for o in todo)
+                try:
+                    ok = input(f"open {len(todo)} draft PR(s): {names}? type 'yes': ") == "yes"
+                except EOFError:
+                    ok = False
+                if not ok:
+                    die(f"confirmation needed to open PRs for {names}; nothing done. Re-run interactively or pass --yes", "paused")
+            for o in todo:
+                log(f"applying {o['id']} ({o['kind']}) in {o['repo']}@{o['branch']}")
+                result = apply_op(o, start)
+                report["pull_requests"].append(result)
+                o["pull_request"] = result["url"]
     except Stop as e:
         report = error_report(start, str(e), e.state)
     print(render(report, a.output))

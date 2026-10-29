@@ -97,7 +97,18 @@ rendering.
      version after each release (`ci: Bump to version X`), and those new heads are not
      released in the same run.
    - `--max-releases N` caps how many repos one run releases.
-6. **Repin the start repo** last, with the same kind of PR.
+6. **Repin the start repo** last, with the same kind of PR. The final operation also
+   updates lock entries that pin older versions than the released ones, and swaps git-ref
+   pins of org crates (`git = ..., branch/rev/tag = ...`) for a released version. A pin whose
+   crate has no published version yet is a `blocked` `pin_swap` operation with the reason;
+   today that is the case for `hopr-lib` and the other hoprnet crates, which are not on
+   crates.io. `[patch]` git entries are only warned about.
+7. **Open the PRs.** `--execute-no-release` opens a draft PR for each ready repin or final
+   operation, without releasing: it creates a branch in a git worktree
+   (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
+   (inside `nix develop` when the repo has a flake, so the hooks run), commits, pushes and
+   opens the PR. It never merges. A branch name is derived from the edits, so a re-run finds
+   the open PR. `--execute` releases first, then does the same.
 
 ### Output
 
@@ -108,15 +119,16 @@ or run the releases itself.
 
 | Field | Meaning |
 | --- | --- |
-| `state` | `release_ready`, `repin_required`, `final_repin_required`, `manual_release_required`, `complete`, `paused`, `error` |
+| `state` | `release_ready`, `repin_required`, `final_repin_required`, `manual_release_required`, `blocked`, `complete`, `paused`, `error` |
 | `summary` | One sentence on where the cascade stands. |
 | `repos_to_update` | Per repo and branch: its operation ids, `needs_pr`, and the crates it releases. |
 | `crates_to_change` | Per crate: the version to publish, repo, branch, `republish`, operation id. |
-| `operations` | The full ordered list. Each has `id`, `kind`, `repo`, `branch`, `status` (`ready` or `pending`), `depends_on`, `description`. |
+| `operations` | The full ordered list. Each has `id`, `kind`, `repo`, `branch`, `status` (`ready`, `pending` or `blocked`), `depends_on`, `description`, `layer`, `concurrency_group`. |
 | `ready_operations`, `next` | Ids that can run now, and the first of them. |
 | `layers` | Operation ids per layer. A layer is 1 + the highest layer among an operation's `depends_on`. Operations in one layer are independent; each also carries `layer` and `concurrency_group` (`layer-N`). |
 | `conditions` | What must hold before the cascade continues, each with a `verify` command. |
 | `resume` | The command to run once the conditions hold. `null` when complete. |
+| `pull_requests` | Draft PRs opened or found by `--execute` and `--execute-no-release`: operation, repo, base, branch, url, state (`opened` or `exists`). |
 | `fixed_inputs`, `git_pinned_out_of_scope`, `warnings` | Inputs only checked on crates.io, org crates pinned by git (repin, not released), and problems such as a yanked fixed input. |
 
 Operation kinds:
@@ -126,7 +138,8 @@ Operation kinds:
 | `release` | `crates`, `workflow`, `command`, `republish` | Run the repo's release workflow. `republish` means the head version is already published, so the preceding `repin` bumps it. |
 | `release_manual` | `crates` | The repo has no release workflow. Publish by hand. |
 | `repin` | `edits`, `version_bumps`, `then` | Raise requirements in a library repo (file, line, key, current, required). Needs a PR with a refreshed `Cargo.lock`. |
-| `final_repin` | `edits`, `lock_updates`, `then` | Update the start repo: requirement edits, and lock entries that pin older versions than the released ones (`cargo update -p <crate>`). |
+| `final_repin` | `edits`, `lock_updates`, `then` | Update the start repo: requirement edits, git-pin swaps (`edits` with `swap: git_to_version`), and lock entries that pin older versions than the released ones (`cargo update -p <crate>`). |
+| `pin_swap` | `blocked_reason` | A git pin that cannot be swapped yet. `status` is `blocked`. |
 
 Run the script once per start repo. `--from edge-client@release/4.1` and
 `--from hoprd@release/4.1` share the library operations and differ in the final one.

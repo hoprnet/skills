@@ -25,9 +25,9 @@ def step(repo, crates, todo=None, gaps=(), requires=(), workflow="release.yaml",
                 release_versions=({c: rc.bump_patch(v) for c, v in head.items()} if republish else todo))
 
 
-def plan(steps, repin=(), fixed=(), locked=None, target=None):
+def plan(steps, repin=(), fixed=(), locked=None, target=None, pins=()):
     return dict(start=("edge-client", "main"), steps=steps, fixed=list(fixed), pinned=[], repin=list(repin),
-                locked=locked or {}, target=target or {})
+                locked=locked or {}, target=target or {}, pins=list(pins))
 
 
 class Admits(unittest.TestCase):
@@ -218,6 +218,262 @@ class Report(unittest.TestCase):
     def test_complete(self):
         r = rc.status(plan([step("hopr-api", {"hopr-api": "4.4.0"})]))
         self.assertEqual((r["state"], r["operations"], r["next"], r["resume"]), ("complete", [], {"kind": "none"}, None))
+
+
+class LatestCompatible(unittest.TestCase):
+    versions = ["2.3.0", "2.3.1", "2.3.2", "3.0.1", "3.1.0", "0.9.3", "0.9.4", "0.10.0"]
+
+    def test_same_major(self):
+        self.assertEqual(rc.pick_latest_compatible(self.versions, "2.3.3"), "2.3.2")
+        self.assertEqual(rc.pick_latest_compatible(self.versions, "3.0.2"), "3.1.0")
+
+    def test_zero_major_follows_the_minor(self):
+        self.assertEqual(rc.pick_latest_compatible(self.versions, "0.9.5"), "0.9.4")
+        self.assertEqual(rc.pick_latest_compatible(self.versions, "0.10.1"), "0.10.0")
+
+    def test_nothing_published_in_the_line_returns_none(self):
+        self.assertIsNone(rc.pick_latest_compatible(self.versions, "7.0.0"))
+
+    def test_prereleases_are_skipped(self):
+        self.assertEqual(rc.pick_latest_compatible(["1.0.0", "1.1.0-rc.1"], "1.1.0"), "1.0.0")
+
+
+class EditText(unittest.TestCase):
+    manifest = ('[package]\nname = "hopr-api"\nversion = "4.4.1"\n\n[dependencies]\n'
+                'hopr-types = { version = "4.1.0", features = ["a"] }\nblokli-client = "0.35.0"\nhopr-utils = "=0.17.3"\n'
+                '\n[dependencies.serde]\nversion = "4.4.1"\n')
+
+    def edit(self, key, current, required, line):
+        return dict(file="Cargo.toml", line=line, key=key, crate=key, current=current, required=required)
+
+    def test_new_req_keeps_an_operator_and_replaces_complex_ranges(self):
+        self.assertEqual(rc.new_req("4.1.0", "5.0.0"), "5.0.0")
+        self.assertEqual(rc.new_req("=4.4.0", "4.4.1"), "=4.4.1")
+        self.assertEqual(rc.new_req("~1.2.3", "1.3.0"), "~1.3.0")
+        self.assertEqual(rc.new_req(">=1.2, <2", "2.1.0"), "2.1.0")
+
+    def test_edit_replaces_only_the_requirement_on_its_line(self):
+        out = rc.edit_text(self.manifest, self.edit("hopr-types", "4.1.0", "5.0.0", 6))
+        self.assertIn('hopr-types = { version = "5.0.0", features = ["a"] }', out)
+        self.assertIn('version = "4.4.1"', out)  # the package version is untouched
+        self.assertEqual(out.count("\n"), self.manifest.count("\n"))
+
+    def test_edit_keeps_an_exact_pin_exact(self):
+        out = rc.edit_text(self.manifest, self.edit("hopr-utils", "=0.17.3", "0.17.5", 8))
+        self.assertIn('hopr-utils = "=0.17.5"', out)
+
+    def test_edit_that_does_not_match_its_line_is_an_error(self):
+        with self.assertRaises(rc.Stop) as e:
+            rc.edit_text(self.manifest, self.edit("hopr-types", "3.0.0", "5.0.0", 6))
+        self.assertIn("Cargo.toml:6", str(e.exception))
+
+    def test_version_bump_changes_the_package_version_only(self):
+        out = rc.bump_text(self.manifest, dict(crate="hopr-api", file="Cargo.toml", current="4.4.1", suggested="4.4.2"))
+        self.assertIn('[package]\nname = "hopr-api"\nversion = "4.4.2"', out)
+        self.assertIn('[dependencies.serde]\nversion = "4.4.1"', out)  # a dependency table with the same text stays
+
+    def test_version_bump_in_a_workspace_package_table(self):
+        text = '[workspace]\nmembers = ["a"]\n\n[workspace.package]\nversion = "0.28.0"\n'
+        out = rc.bump_text(text, dict(crate="x", file="Cargo.toml", current="0.28.0", suggested="0.28.1"))
+        self.assertIn('version = "0.28.1"', out)
+
+
+class ApplyOps(unittest.TestCase):
+    def op(self, **kw):
+        base = dict(id="op-1", kind="repin", repo="hopr-api", branch="main", depends_on=[], status="ready",
+                    edits=[dict(file="Cargo.toml", line=6, key="hopr-types", crate="hopr-types", current="4.1.0", required="5.0.0")],
+                    version_bumps=[dict(crate="hopr-api", file="Cargo.toml", current="4.4.1", suggested="4.4.2")],
+                    lock_updates=[])
+        base.update(kw)
+        return base
+
+    def test_lock_commands(self):
+        cmds = rc.lock_commands(self.op(lock_updates=[dict(crate="hopr-utilities", locked="0.9.3", target="0.9.4")]))
+        self.assertEqual(cmds[0], "cargo metadata --format-version 1 >/dev/null")
+        self.assertIn("cargo update -p hopr-types", cmds)
+        self.assertIn("cargo update -p hopr-utilities@0.9.3 --precise 0.9.4", cmds)
+
+    def test_branch_name_is_stable_and_changes_with_the_edits(self):
+        a, b = self.op(), self.op()
+        c = self.op(edits=[dict(a_edit_changed="x", file="Cargo.toml", line=7, key="k", crate="k", current="1", required="2")])
+        self.assertEqual(rc.branch_name(a), rc.branch_name(b))
+        self.assertNotEqual(rc.branch_name(a), rc.branch_name(c))
+        self.assertTrue(rc.branch_name(a).startswith("chore/release-cascade-repin-"))
+
+    def test_pr_text_names_the_crates_and_the_versions(self):
+        title, body = rc.pr_text(self.op(), ("edge-client", "release/4.1"))
+        self.assertIn("hopr-types", title)
+        self.assertIn("hopr-types 4.1.0 -> 5.0.0", body)
+        self.assertIn("edge-client@release/4.1", body)
+
+
+class GitFlow(unittest.TestCase):
+    """The git side of --execute-no-release against a local bare origin. cargo and nix are stubbed."""
+
+    def setUp(self):
+        import os, subprocess, tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        self.env = env
+        sh = lambda *a, cwd=None: subprocess.run(a, cwd=cwd, env=env, check=True, capture_output=True, text=True)
+        sh("git", "init", "-q", "--bare", "-b", "main", str(self.tmp / "origin.git"))
+        sh("git", "clone", "-q", str(self.tmp / "origin.git"), str(self.tmp / "hopr-api"))
+        repo = self.tmp / "hopr-api"
+        (repo / "Cargo.toml").write_text(EditText.manifest)
+        (repo / "Cargo.lock").write_text("# lock\n")
+        sh("git", "add", "Cargo.toml", "Cargo.lock", cwd=repo)
+        sh("git", "commit", "-q", "-m", "init", cwd=repo)
+        sh("git", "push", "-q", "-u", "origin", "main", cwd=repo)
+        self.sh, self.repo = sh, repo
+        self.saved = (rc.WORKSPACE, rc.FORGE, dict(os.environ))
+        os.environ.update(env)
+        rc.WORKSPACE = self.tmp
+
+        class Forge:
+            prs = []
+            def git_env(self): return {}
+            def find_pr(self, repo, head): return None
+            def create_pr(self, repo, head, base, title, body, draft=True):
+                self.prs.append((repo, head, base, title, draft))
+                return "https://github.com/hoprnet/hopr-api/pull/1"
+        rc.FORGE = Forge()
+        self.forge = rc.FORGE
+        self.cmds = []
+
+    def tearDown(self):
+        import os, shutil
+        rc.WORKSPACE, rc.FORGE = self.saved[0], self.saved[1]
+        os.environ.clear(); os.environ.update(self.saved[2])
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def stub_shell(self, wt, cmds):
+        self.cmds.append(cmds)  # a real run would update Cargo.lock here
+        (Path(wt) / "Cargo.lock").write_text("# lock updated\n")
+
+    def test_edits_are_committed_on_a_branch_pushed_and_a_draft_pr_is_opened(self):
+        op = ApplyOps().op()
+        result = rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
+        branch = rc.branch_name(op)
+        self.assertEqual(result["url"], "https://github.com/hoprnet/hopr-api/pull/1")
+        self.assertEqual(result["state"], "opened")
+        # the branch exists on the remote with the edited manifest and the updated lock
+        shown = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "show", f"{branch}:Cargo.toml").stdout
+        self.assertIn('hopr-types = { version = "5.0.0"', shown)
+        self.assertIn('version = "4.4.2"', shown)
+        lock = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "show", f"{branch}:Cargo.lock").stdout
+        self.assertEqual(lock, "# lock updated\n")
+        msg = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "log", "-1", "--format=%B", branch).stdout
+        self.assertIn("Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>", msg)
+        self.assertEqual(self.forge.prs[0][:3] + self.forge.prs[0][4:], ("hopr-api", branch, "main", True))
+        self.assertTrue(self.cmds and self.cmds[0][0].startswith("cargo metadata"))
+        # the main branch is untouched
+        main = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "show", "main:Cargo.toml").stdout
+        self.assertIn('version = "4.1.0"', main)
+
+    def test_an_existing_open_pr_is_reported_and_nothing_is_pushed_again(self):
+        self.forge.find_pr = lambda repo, head: "https://github.com/hoprnet/hopr-api/pull/9"
+        result = rc.apply_op(ApplyOps().op(), ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertEqual((result["state"], result["url"]), ("exists", "https://github.com/hoprnet/hopr-api/pull/9"))
+        self.assertEqual(self.forge.prs, [])
+        self.assertEqual(self.cmds, [])
+
+
+class GitPins(unittest.TestCase):
+    ms = {"Cargo.toml": {
+        "dependencies": {
+            "hopr-lib": {"git": "https://github.com/hoprnet/hoprnet", "branch": "master", "features": ["serde"]},
+            "hopr-utils-session": {"git": "https://github.com/hoprnet/hoprnet", "rev": "af80993c", "default-features": False},
+            "other": {"git": "https://github.com/somebody/else", "branch": "main"},
+            "plain": "1.0"},
+        "workspace": {"dependencies": {"hopr-transport-mixer": {"git": "https://github.com/hoprnet/hoprnet", "tag": "v1"}}},
+        "patch": {"crates-io": {"hopr-api": {"git": "https://github.com/hoprnet/hopr-api", "branch": "x"}}}}}
+
+    def test_org_git_pins_are_found_with_their_ref(self):
+        pins = rc.git_pins(self.ms)
+        got = {p["crate"]: p["ref"] for p in pins}
+        self.assertEqual(got, {"hopr-lib": "branch master", "hopr-utils-session": "rev af80993c",
+                               "hopr-transport-mixer": "tag v1"})
+
+    def test_pins_of_other_owners_and_plain_requirements_are_ignored(self):
+        self.assertNotIn("other", {p["crate"] for p in rc.git_pins(self.ms)})
+        self.assertNotIn("plain", {p["crate"] for p in rc.git_pins(self.ms)})
+
+    def test_patch_entries_are_not_pins_but_are_reported(self):
+        self.assertEqual(rc.patch_pins(self.ms), ["hopr-api"])
+
+    def pin(self, line, **kw):
+        return dict(file="Cargo.toml", line=line, key="hopr-lib", crate="hopr-lib", current="git x", required="5.0.0", swap="git_to_version", **kw)
+
+    def test_swap_a_branch_pin_that_spans_lines(self):
+        text = 'a = 1\nhopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", features = [\n  "serde",\n] }\n'
+        out = rc.swap_git_text(text, self.pin(2))
+        self.assertIn('hopr-lib = { version = "5.0.0", features = [\n  "serde",\n] }', out)
+        self.assertNotIn("git", out)
+
+    def test_swap_a_rev_pin(self):
+        text = 'x = { git = "https://github.com/hoprnet/hoprnet", rev = "af80993c", default-features = false }\n'
+        out = rc.swap_git_text(text, dict(self.pin(1), key="x"))
+        self.assertEqual(out, 'x = { version = "5.0.0", default-features = false }\n')
+
+    def test_swap_a_pin_with_nothing_else(self):
+        text = 'x = { git = "https://github.com/hoprnet/hoprnet", branch = "main" }\n'
+        self.assertEqual(rc.swap_git_text(text, dict(self.pin(1), key="x")), 'x = { version = "5.0.0" }\n')
+
+    def test_swap_on_a_line_without_a_git_pin_is_an_error(self):
+        with self.assertRaises(rc.Stop):
+            rc.swap_git_text('hopr-lib = "1.0"\n', self.pin(1))
+
+    def test_edit_text_routes_swap_edits(self):
+        text = 'hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master" }\n'
+        self.assertIn('version = "5.0.0"', rc.edit_text(text, self.pin(1)))
+
+
+class PinOperations(unittest.TestCase):
+    def pin(self, target):
+        return dict(file="Cargo.toml", line=97, key="hopr-lib", crate="hopr-lib", git="https://github.com/hoprnet/hoprnet",
+                    ref="branch master", locked="5.0.0-rc.5", target=target)
+
+    def test_a_published_version_makes_the_swap_part_of_the_final_operation(self):
+        ops = rc.operations(plan([], pins=[self.pin("5.0.0")]))
+        self.assertEqual([o["kind"] for o in ops], ["final_repin"])
+        e = ops[0]["edits"][0]
+        self.assertEqual((e["crate"], e["required"], e["swap"], e["line"]), ("hopr-lib", "5.0.0", "git_to_version", 97))
+        self.assertIn("git https://github.com/hoprnet/hoprnet branch master", e["current"])
+        self.assertEqual(ops[0]["status"], "ready")
+        self.assertIn("cargo update -p hopr-lib", rc.lock_commands(ops[0]))
+
+    def test_a_pin_with_no_published_version_is_a_blocked_operation_with_the_reason(self):
+        ops = rc.operations(plan([], pins=[self.pin(None)]))
+        self.assertEqual([o["kind"] for o in ops], ["pin_swap"])
+        self.assertEqual(ops[0]["status"], "blocked")
+        self.assertIn("hopr-lib", ops[0]["blocked_reason"])
+        self.assertIn("crates.io", ops[0]["blocked_reason"])
+
+    def test_report_state_is_blocked_when_only_blocked_operations_remain(self):
+        r = rc.status(plan([], pins=[self.pin(None)]))
+        self.assertEqual(r["state"], "blocked")
+        self.assertEqual(r["ready_operations"], [])
+        self.assertEqual(r["next"], {"kind": "none"})
+        self.assertIn("hopr-lib", r["summary"])
+
+    def test_blocked_operations_do_not_stop_ready_ones(self):
+        a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
+        r = rc.status(plan([a], pins=[self.pin(None)]))
+        self.assertEqual(r["state"], "release_ready")
+        self.assertEqual(r["ready_operations"], ["op-1"])
+
+
+class Resume(unittest.TestCase):
+    def test_resume_keeps_the_flags_that_shape_the_run(self):
+        saved = rc.RESUME_FLAGS
+        try:
+            rc.RESUME_FLAGS = "--workspace /w --forge api -o mjson"
+            cmd = rc.resume_command(("edge-client", "release/4.1"))
+        finally:
+            rc.RESUME_FLAGS = saved
+        self.assertIn("--from edge-client@release/4.1", cmd)
+        self.assertIn("--workspace /w --forge api -o mjson", cmd)
+        self.assertTrue(cmd.endswith("--execute"))
 
 
 class Layers(unittest.TestCase):
