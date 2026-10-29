@@ -18,9 +18,10 @@ mapped to its repo and branch:
 GitHub access: gh when it is installed and logged in, else the REST API with a token from
 GH_TOKEN or GITHUB_TOKEN, --token-cmd CMD (a shell command that prints one token, for example a
 git credential helper; run again after 50 minutes or a 401, so a long --wait-merge survives the
-one-hour life of an App installation token) or --token-file PATH. --forge gh|api forces one. The
-token goes to git through an environment header, never into a command line or a file, and the
-script never prints it. crates.io needs no token. Python 3.11 or newer (tomllib), no packages.
+one-hour life of an App installation token) or --token-file PATH. --token-cmd and --token-file
+mean the REST API even when gh is installed. --forge gh|api forces one. The token goes to git
+through an environment header; the script never puts it on a command line, writes it to a file,
+or prints it. crates.io needs no token. Python 3.11 or newer (tomllib), no packages.
 
 Run from the directory that holds the repo clones, or pass --workspace. Missing org repos
 are cloned there (partial clone). Default is a DRY RUN: it prints the operations and

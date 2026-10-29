@@ -69,14 +69,15 @@ repos are cloned there (partial clone). No config file exists: each run derives 
 GitHub access uses `gh` when it is installed and logged in. Otherwise it uses the REST API
 with `GH_TOKEN` or `GITHUB_TOKEN` (`--forge gh|api` forces one), so a VM with no `gh` works.
 The token can also come from `--token-cmd CMD`, a shell command that prints one token (for
-example a git credential helper), or from `--token-file PATH`. The order is `GH_TOKEN` or
-`GITHUB_TOKEN`, then the command, then the file. The command runs again when its token is 50
-minutes old, since an App installation token lasts an hour, and after a 401, so `--wait-merge`
-can run longer. The script needs Python 3.11 or newer and no packages. A GitHub App needs these
-permissions on the repos: contents write (push), pull requests write, actions write (dispatch)
-and workflows (to push a workflow file). A dry run needs none.
-The token reaches git through an environment header and is never in a command line or a file,
-and the script never prints it.
+example a git credential helper), or from `--token-file PATH`; either option means the REST
+API even when `gh` is installed. The order is `GH_TOKEN` or `GITHUB_TOKEN`, then the command,
+then the file. The command runs again when its token is 50 minutes old, since an App
+installation token lasts an hour, and after a 401, so `--wait-merge` can run longer. The script
+needs Python 3.11 or newer and no packages. A GitHub App needs these permissions on the repos:
+contents write (push), pull requests write, actions write (dispatch) and workflows (to push a
+workflow file). A dry run needs none.
+The token reaches git through an environment header; the script never puts it on a command
+line, writes it to a file, or prints it.
 `-o json` (default) prints indented JSON, `-o mjson` the same on one line, `-o plain` a text
 rendering.
 
