@@ -868,34 +868,41 @@ class BumpHeads(unittest.TestCase):
 class NixCwd(unittest.TestCase):
     """`nix develop <path>` runs its shell hook in the current directory, so it must be the worktree."""
 
-    def test_commands_in_a_flake_worktree_run_with_the_worktree_as_cwd(self):
+    def worktree(self, flake=True):
         import tempfile
         wt = Path(tempfile.mkdtemp())
-        (wt / "flake.nix").write_text("{}")
-        calls = []
-        saved = rc.run
+        if flake:
+            (wt / "flake.nix").write_text("{}")
+        return wt
+
+    def run_with(self, nix_installed, fn):
+        calls, saved_run, saved_which = [], rc.run, rc.shutil.which
         rc.run = lambda *a, **kw: calls.append((a, kw)) or (0, "")
+        rc.shutil.which = lambda name: "/bin/nix" if (nix_installed and name == "nix") else None
         try:
-            rc.in_shell(wt, ["cargo metadata"])
-            rc.hooked_git(wt, "status")
+            fn()
         finally:
-            rc.run = saved
+            rc.run, rc.shutil.which = saved_run, saved_which
+        return calls
+
+    def test_commands_in_a_flake_worktree_run_with_the_worktree_as_cwd(self):
+        wt = self.worktree()
+        calls = self.run_with(True, lambda: (rc.in_shell(wt, ["cargo metadata"]), rc.hooked_git(wt, "status")))
         self.assertEqual(len(calls), 2)
         for args, kw in calls:
             self.assertEqual(args[0], "nix")
             self.assertEqual(kw.get("cwd"), wt)
 
+    def test_a_flake_worktree_without_nix_installed_runs_cargo_and_git_directly(self):
+        wt = self.worktree()
+        calls = self.run_with(False, lambda: (rc.in_shell(wt, ["cargo metadata"]), rc.hooked_git(wt, "status")))
+        self.assertEqual([a[0] for a, _ in calls], ["bash", "git"])
+        self.assertNotIn("nix", [x for a, _ in calls for x in a])
+
     def test_commands_without_a_flake_do_not_use_nix(self):
-        import tempfile
-        wt = Path(tempfile.mkdtemp())
-        calls = []
-        saved = rc.run
-        rc.run = lambda *a, **kw: calls.append(a) or (0, "")
-        try:
-            rc.hooked_git(wt, "status")
-        finally:
-            rc.run = saved
-        self.assertEqual(calls[0][0], "git")
+        wt = self.worktree(flake=False)
+        calls = self.run_with(True, lambda: rc.hooked_git(wt, "status"))
+        self.assertEqual(calls[0][0][0], "git")
 
 
 class Versions(unittest.TestCase):
@@ -1432,6 +1439,182 @@ class ReExports(unittest.TestCase):
     def test_a_renamed_dependency_is_found_by_its_key(self):
         self.commit("pub use hopr_utils::thing;\n")
         self.assertTrue(rc.reexports_dep("r", "origin/main", "hopr-utilities", "hopr-utils"))
+
+
+class TokenSources(unittest.TestCase):
+    def source(self, **kw):
+        calls = kw.pop("calls", [])
+        outputs = kw.pop("outputs", [(0, "tok-1\n", "")])
+        now = kw.pop("now", [0.0])
+
+        def run_cmd(cmd):
+            calls.append(cmd)
+            return outputs[min(len(calls) - 1, len(outputs) - 1)]
+        return rc.TokenSource(clock=lambda: now[0], run_cmd=run_cmd, **kw), calls, now
+
+    def test_the_env_token_wins_and_the_command_is_not_run(self):
+        src, calls, _ = self.source(env_token="env-tok", cmd="print-token")
+        self.assertEqual(src.get(), "env-tok")
+        self.assertEqual(calls, [])
+
+    def test_the_command_output_is_the_token_and_is_reused_until_it_is_old(self):
+        src, calls, now = self.source(cmd="print-token", outputs=[(0, "tok-1\n", ""), (0, "tok-2\n", "")])
+        self.assertEqual((src.get(), src.get()), ("tok-1", "tok-1"))
+        self.assertEqual(len(calls), 1)
+        now[0] += 49 * 60
+        self.assertEqual(src.get(), "tok-1")
+        now[0] += 2 * 60                       # past 50 minutes: installation tokens last an hour
+        self.assertEqual(src.get(), "tok-2")
+        self.assertEqual(len(calls), 2)
+
+    def test_refresh_after_a_401_asks_the_command_again_and_drops_the_env_token(self):
+        src, calls, _ = self.source(env_token="old", cmd="print-token", outputs=[(0, "new\n", "")])
+        self.assertEqual(src.get(), "old")
+        self.assertEqual(src.refresh(), "new")
+        self.assertEqual(src.get(), "new")
+
+    def test_refresh_with_only_an_env_token_says_what_is_missing(self):
+        src, _, _ = self.source(env_token="old")
+        with self.assertRaises(rc.Stop) as e:
+            src.refresh()
+        self.assertIn("--token-cmd", str(e.exception))
+
+    def test_a_token_file_is_read_every_time(self):
+        import tempfile
+        f = Path(tempfile.mkdtemp()) / "token"
+        f.write_text("file-1\n")
+        src = rc.TokenSource(file=str(f))
+        self.assertEqual(src.get(), "file-1")
+        f.write_text("file-2\n")
+        self.assertEqual(src.get(), "file-2")
+        f.write_text("\n")
+        with self.assertRaises(rc.Stop):
+            src.get()
+
+    def test_a_failing_command_reports_its_stderr_and_never_its_output(self):
+        src, _, _ = self.source(cmd="print-token", outputs=[(3, "SECRET-OUTPUT", "helper: not logged in\nmore")])
+        with self.assertRaises(rc.Stop) as e:
+            src.get()
+        self.assertIn("exit 3", str(e.exception))
+        self.assertIn("helper: not logged in", str(e.exception))
+        self.assertNotIn("SECRET-OUTPUT", str(e.exception))
+
+    def test_no_token_or_more_than_one_line_is_an_error(self):
+        for out in ("", "\n", "line one\nline two\n"):
+            src, _, _ = self.source(cmd="print-token", outputs=[(0, out, "")])
+            with self.assertRaises(rc.Stop):
+                src.get()
+
+    def test_no_source_at_all_names_every_option(self):
+        with self.assertRaises(rc.Stop) as e:
+            rc.TokenSource().get()
+        for name in ("GH_TOKEN", "--token-cmd", "--token-file"):
+            self.assertIn(name, str(e.exception))
+
+
+class ApiForgeTokens(unittest.TestCase):
+    def test_a_401_refreshes_the_token_and_retries_once(self):
+        answers = iter([(401, {"message": "Bad credentials"}), (200, {"workflow_runs": [{"id": 5}]})])
+        calls = []
+
+        def http(method, url, body=None):
+            calls.append(url)
+            return next(answers)
+        src = rc.TokenSource(env_token="old", cmd="print-token", run_cmd=lambda c: (0, "new\n", ""))
+        self.assertEqual(rc.ApiForge(src, http).run_ids("r", "release.yaml", "main"), {5})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(src.get(), "new")
+
+    def test_a_401_with_nothing_to_refresh_it_with_ends_the_run_with_a_clear_message(self):
+        http = FakeHttp({("GET", "/runs"): (401, {"message": "Bad credentials"})})
+        with self.assertRaises(rc.Stop) as e:
+            rc.ApiForge(rc.TokenSource(env_token="old"), http).run_ids("r", "w", "main")
+        self.assertIn("--token-cmd", str(e.exception))
+
+    def test_git_gets_the_current_token_each_time(self):
+        import base64
+        out = iter([(0, "t1\n", ""), (0, "t2\n", "")])
+        src = rc.TokenSource(cmd="print-token", run_cmd=lambda c: next(out))
+        forge = rc.ApiForge(src, FakeHttp({}))
+
+        def token_in(env):
+            return base64.b64decode(env["GIT_CONFIG_VALUE_0"].split()[-1]).decode().split(":", 1)[1]
+        self.assertEqual(token_in(forge.git_env()), "t1")
+        src.refresh()
+        self.assertEqual(token_in(forge.git_env()), "t2")
+
+
+class ForgeChoiceWithTokenSources(unittest.TestCase):
+    def test_an_explicit_token_command_means_the_api_even_when_gh_is_there(self):
+        self.assertEqual(rc.choose_forge(which=lambda n: "/bin/gh", gh_ok=lambda: True, env={}, token_cmd="print-token"), "api")
+        self.assertEqual(rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={}, token_file="/run/token"), "api")
+
+    def test_forcing_gh_still_needs_gh(self):
+        with self.assertRaises(rc.Stop):
+            rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={}, force="gh", token_cmd="print-token")
+
+    def test_the_error_without_any_access_names_the_new_options(self):
+        with self.assertRaises(rc.Stop) as e:
+            rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={})
+        self.assertIn("--token-cmd", str(e.exception))
+
+    def test_resume_keeps_the_token_options(self):
+        from types import SimpleNamespace
+        a = SimpleNamespace(workspace=None, forge="auto", output="json", release_type="patch", max_releases=None,
+                            token_cmd="printf 'x' | cat", token_file="/run/token")
+        flags = rc.resume_flags(a)
+        self.assertIn("--token-cmd 'printf '\"'\"'x'\"'\"' | cat'", flags)
+        self.assertIn("--token-file /run/token", flags)
+
+
+class TokenCommandRobustness(unittest.TestCase):
+    def test_a_token_command_that_hangs_is_stopped(self):
+        import time
+        t0 = time.monotonic()
+        with self.assertRaises(rc.Stop) as e:
+            rc.run_token_command("sleep 5", timeout=0.3)
+        self.assertLess(time.monotonic() - t0, 3)
+        self.assertIn("did not finish", str(e.exception))
+
+    def test_a_token_command_gets_no_input_and_its_output_is_returned(self):
+        code, out, err = rc.run_token_command("cat >/dev/null; echo tok", timeout=5)  # cat would block on a terminal
+        self.assertEqual((code, out.strip()), (0, "tok"))
+
+    def test_an_empty_token_file_is_read_again_before_the_run_stops(self):
+        reads = iter(["", "", "tok-file\n"])
+        slept = []
+        src = rc.TokenSource(file="/run/token", read_file=lambda p: next(reads), sleep=slept.append)
+        self.assertEqual(src.get(), "tok-file")
+        self.assertEqual(len(slept), 2)
+
+    def test_a_token_file_that_stays_empty_still_stops_the_run(self):
+        src = rc.TokenSource(file="/run/token", read_file=lambda p: "", sleep=lambda d: None)
+        with self.assertRaises(rc.Stop):
+            src.get()
+
+    def test_a_gh_that_cannot_launch_does_not_block_a_token_source(self):
+        def broken(*a, **kw):
+            raise OSError("exec format error")
+        saved = rc.run
+        rc.run = broken
+        try:
+            self.assertEqual(rc.choose_forge(which=lambda n: "/bin/gh", env={}, token_cmd="print-token"), "api")
+            self.assertEqual(rc.choose_forge(which=lambda n: "/bin/gh", env={}, force="api", token_cmd="print-token"), "api")
+        finally:
+            rc.run = saved
+
+    def test_a_token_file_path_is_made_absolute_for_the_resume_command(self):
+        from types import SimpleNamespace
+        a = SimpleNamespace(workspace=None, forge="auto", output="json", release_type="patch", max_releases=None,
+                            token_cmd=None, token_file="rel/token")
+        import os
+        self.assertIn(f"--token-file {os.path.abspath('rel/token')}", rc.resume_flags(a))
+
+    def test_forge_gh_cannot_be_combined_with_a_token_option(self):
+        with self.assertRaises(rc.Stop) as e:
+            rc.choose_forge(which=lambda n: "/bin/gh", gh_ok=lambda: True, env={}, force="gh", token_cmd="print-token")
+        self.assertIn("--forge gh", str(e.exception))
+        self.assertIn("--token-cmd", str(e.exception))
 
 
 class Layers(unittest.TestCase):

@@ -68,7 +68,18 @@ repos are cloned there (partial clone). No config file exists: each run derives 
 
 GitHub access uses `gh` when it is installed and logged in. Otherwise it uses the REST API
 with `GH_TOKEN` or `GITHUB_TOKEN` (`--forge gh|api` forces one), so a VM with no `gh` works.
-The token reaches git through an environment header and is never in a command line or a file.
+The token can also come from `--token-cmd CMD`, a shell command that prints one token (for
+example a git credential helper), or from `--token-file PATH`; either option means the REST
+API even when `gh` is installed. The order is `GH_TOKEN` or `GITHUB_TOKEN`, then the command,
+then the file. The command runs again when its token is 50 minutes old, since an App
+installation token lasts an hour, and after a 401, so `--wait-merge` can run longer. The script
+needs Python 3.11 or newer and no packages. A GitHub App needs these permissions on the repos:
+contents write (push), pull requests write, actions write (dispatch) and workflows (to push a
+workflow file). A dry run needs none.
+The token reaches git through an environment header; the script never puts it on a command
+line, writes it to a file, or prints it. The `resume` command repeats `--token-cmd`, so keep
+credentials out of that command: use a helper, or `--token-file`. The command has 30 seconds, gets
+no input, and `--forge gh` cannot be combined with either option.
 `-o json` (default) prints indented JSON, `-o mjson` the same on one line, `-o plain` a text
 rendering.
 
@@ -136,7 +147,8 @@ rendering.
 10. **Open the PRs.** `--execute-no-release` opens a PR for each ready repin or final
    operation, without releasing: it creates a branch in a git worktree
    (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
-   (inside `nix develop` when the repo has a flake, so the hooks run), commits, pushes and
+   (inside `nix develop` when the repo has a flake and nix is installed, so the hooks run; on a
+   machine with only cargo and git it runs them directly), commits, pushes and
    opens the PR. It never merges. A branch name is a hash of everything the PR holds (edits, version bumps, lock updates, the git revision move and the base commit), so a re-run finds
    the open PR. `--execute` releases first, then does the same.
 
