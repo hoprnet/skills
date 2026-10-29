@@ -14,10 +14,12 @@ mapped to its repo and branch:
   repo has no such branch             -> fixed input: only checked to be on crates.io
 
 Run from the directory that holds the repo clones, or pass --workspace. Missing org repos
-are cloned there (partial clone). Default is a DRY RUN: it prints the steps and triggers
-nothing. --execute runs each repo's release workflow with `gh workflow run`, asks `yes`
-before each step (--yes skips it), and continues once the run's "Publish library" step
-succeeds and the crates show on crates.io. Later steps of the run may still fail.
+are cloned there (partial clone). Default is a DRY RUN: it prints the operations and
+triggers nothing. --execute runs the ready release workflows with `gh workflow run`, all
+at the same time, after one `yes` (--yes skips it). It continues for a repo once its
+versions show on crates.io; later jobs of the run do not matter. A crate is released unless
+its head version is already on crates.io. One run releases only the crates in its first
+plan, because CI bumps each head after a release. --max-releases N caps the repos released.
 
 A step is blocked while a repo's own requirements do not admit the versions released below
 it. Repin that repo first. A release publishes to crates.io and cannot be undone.
@@ -42,6 +44,7 @@ turn the list into a workflow, or run the releases. Fields:
   fixed_inputs, git_pinned_out_of_scope, warnings
 Exit code: 0 for every state except error (2).
 """
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import argparse, datetime, json, os, re, subprocess, sys, time, tomllib, urllib.request, urllib.error
 from pathlib import Path
 
@@ -174,6 +177,24 @@ def packages(ms):
         if isinstance(v, str):
             out[p["name"]] = dict(version=v, file=file)
     return out
+
+
+def published_versions(crate):
+    """Non-yanked versions of a crate on crates.io."""
+    return [v["num"] for v in (crates_io(crate) or {"versions": []})["versions"] if not v["yanked"]]
+
+
+def hard_needs(entries, own, releasing, published=published_versions):
+    """Crates this repo must wait for: ones being released whose requirement no published version meets."""
+    cache, out = {}, set()
+    for e in entries:
+        c = e["crate"]
+        if c in releasing and c not in own and c not in out:
+            if c not in cache:
+                cache[c] = published(c)
+            if not any(admits(e["req"], v) for v in cache[c]):
+                out.add(c)
+    return sorted(out)
 
 
 def bump_patch(v):
@@ -330,6 +351,7 @@ def build_plan(start_repo, start_branch):
     target = {c: v for s in plan.values() for c, v in s["head"].items()}
     target.update({f["crate"]: f["version"] for f in fixed})
     steps = [plan[k] for k in order]
+    releasing = set()
     for k in order:
         s = plan[k]
         s["requires"] = sorted({e["crate"] for e in s["entries"] if e["crate"] in crate_step and crate_step[e["crate"]] != k})
@@ -338,6 +360,8 @@ def build_plan(start_repo, start_branch):
         # a repo whose head is published but whose requirements lag must be bumped and released again
         s["republish"] = bool(s["gaps"]) and not s["todo"]
         s["release_versions"] = {c: bump_patch(v) for c, v in s["head"].items()} if s["republish"] else s["todo"]
+        s["hard_requires"] = hard_needs(s["entries"], set(s["crates"]), releasing)
+        releasing |= set(s["release_versions"])
         target.update(s["release_versions"])  # leaf first, so downstream repos see the version that will exist
     start_entries = dep_entries(manifests(start_repo, f"origin/{start_branch}"))
     return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned),
@@ -389,7 +413,7 @@ def operations(plan):
                         then="open a PR with these edits and a refreshed Cargo.lock, then merge it")
         if s["todo"] or s["gaps"]:
             crates = s["release_versions"]
-            deps = {rel[c] for c in s["requires"] if c in rel} | ({repin["id"]} if repin else set())
+            deps = {rel[c] for c in s.get("hard_requires", s["requires"]) if c in rel} | ({repin["id"]} if repin else set())
             op = new("release" if s["workflow"] else "release_manual", repo=s["repo"], branch=s["branch"],
                      workflow=s["workflow"], republish=s["republish"], depends_on=sorted(deps),
                      crates=[dict(name=c, version=v) for c, v in crates.items()],
@@ -481,8 +505,9 @@ def run_ids(repo, wf, branch):
     return {r["databaseId"] for r in rows}
 
 
-def wait_publish_step(repo, run_id, timeout=45 * 60):
-    """Block until the crates.io publish step of the run succeeds. Later steps may still fail."""
+def wait_publish_step(repo, run_id, todo, timeout=45 * 60):
+    """Block until the publish step succeeds. crates.io decides: if the step reports a failure
+    but every version is on crates.io, carry on. Later steps of the run do not matter."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         d = gh_json("run", "view", str(run_id), "--repo", f"{ORG}/{repo}", "--json", "status,conclusion,jobs")
@@ -491,21 +516,20 @@ def wait_publish_step(repo, run_id, timeout=45 * 60):
         if state == "success":
             return d["status"]
         if state in ("failure", "cancelled", "timed_out") or (d["status"] == "completed" and state != "success"):
+            if all(is_published(n, v) for n, v in todo.items()):
+                return d["status"]
             die(f"{repo}: step '{PUBLISH_STEP}' did not succeed ({state or 'not reached'}); "
                      f"see https://github.com/{ORG}/{repo}/actions/runs/{run_id}. Nothing further triggered")
         time.sleep(20)
+    if all(is_published(n, v) for n, v in todo.items()):
+        return "timeout"
     die(f"{repo}: timeout waiting for step '{PUBLISH_STEP}' of run {run_id}; nothing further triggered")
 
 
-def release_step(i, s, assume_yes, release_type):
+def release_step(s, release_type):
+    """Trigger one repo's release workflow and wait for its crates. Safe to run in a thread."""
+    tag = f"[{s['repo']}]"
     label = f"{s['repo']}@{s['branch']} ({', '.join(f'{n} {v}' for n, v in s['todo'].items())})"
-    if not assume_yes:
-        try:
-            ok = input(f"[{i}] trigger {s['workflow']} for {label}? type 'yes': ") == "yes"
-        except EOFError:
-            ok = False
-        if not ok:
-            die(f"confirmation needed for {label}; nothing triggered. Re-run interactively or pass --yes", "paused")
     before = run_ids(s["repo"], s["workflow"], s["branch"])
     run("gh", "workflow", "run", s["workflow"], "--repo", f"{ORG}/{s['repo']}", "--ref", s["branch"],
         "-f", f"release_type={release_type}")
@@ -516,19 +540,44 @@ def release_step(i, s, assume_yes, release_type):
         if new:
             break
     if len(new) != 1:
-        die(f"{s['repo']}: cannot identify the triggered run (new runs: {sorted(new)}); nothing further triggered")
+        die(f"{s['repo']}: cannot identify the triggered run (new runs: {sorted(new)})")
     rid = new.pop()
-    log(f"  triggered run {rid}: https://github.com/{ORG}/{s['repo']}/actions/runs/{rid}\n"
-        f"  waiting for step '{PUBLISH_STEP}' ...")
-    log(f"  published by run {rid} (run status: {wait_publish_step(s['repo'], rid)}); checking crates.io ...")
+    log(f"{tag} triggered run {rid}: https://github.com/{ORG}/{s['repo']}/actions/runs/{rid}; waiting for '{PUBLISH_STEP}'")
+    log(f"{tag} published by run {rid} (run status: {wait_publish_step(s['repo'], rid, s['todo'])}); checking crates.io")
     pending, deadline = dict(s["todo"]), time.time() + 10 * 60  # index lag; later steps resolve against it
     while pending and time.time() < deadline:
         pending = {n: v for n, v in pending.items() if not is_published(n, v)}
         if pending:
             time.sleep(15)
     if pending:
-        die(f"step succeeded but {pending} not visible on crates.io after 10 min; nothing further triggered")
-    log(f"  on crates.io: {label}")
+        die(f"{s['repo']}: step succeeded but {pending} not visible on crates.io after 10 min")
+    log(f"{tag} on crates.io: {label}")
+
+
+def planned_crates(report):
+    """Crates of every release operation in the first plan of a run. Later plans add CI's post-release bumps; those stay out."""
+    return {c["name"] for o in report["operations"] if o["kind"].startswith("release") for c in o["crates"]}
+
+
+def next_batch(report, planned, remaining):
+    """Ready release operations that belong to the run's first plan, capped by `remaining` (None: no cap)."""
+    batch = [o for o in report["operations"] if o["status"] == "ready" and o["kind"] == "release"
+             and all(c["name"] in planned for c in o["crates"])]
+    return batch if remaining is None else batch[:max(remaining, 0)]
+
+
+def release_batch(steps, release_type):
+    """Release independent repos at the same time. Wait for all, then report every failure."""
+    errors = []
+    with ThreadPoolExecutor(max_workers=len(steps)) as pool:
+        futures = {pool.submit(release_step, s, release_type): s for s in steps}
+        for f in as_completed(futures):
+            try:
+                f.result()
+            except Stop as e:
+                errors.append(f"{futures[f]['repo']}: {e}")
+    if errors:
+        die("; ".join(errors) + ". Other releases in the batch may have finished; re-run the dry run for the current state")
 
 
 def main():
@@ -537,7 +586,8 @@ def main():
     ap.add_argument("--from", dest="start", required=True, metavar="REPO@BRANCH", help="repo and branch to release for")
     ap.add_argument("--workspace", type=Path, help="directory holding the repo clones (default: current directory)")
     ap.add_argument("--execute", action="store_true", help="trigger the release workflows")
-    ap.add_argument("--yes", action="store_true", help="skip the per-step prompt (with --execute)")
+    ap.add_argument("--yes", action="store_true", help="skip the confirmation prompt (with --execute)")
+    ap.add_argument("--max-releases", type=int, metavar="N", help="with --execute: release at most N repos in this run")
     ap.add_argument("--release-type", default="patch", choices=["rc", "patch", "minor", "major"],
                     help="version type after release, passed to the workflow")
     a = ap.parse_args()
@@ -552,10 +602,24 @@ def main():
         run("gh", "auth", "status")
         plan = build_plan(repo, branch)
         report = status(plan)
-        while a.execute and report["state"] == "release_ready":
-            op = report["next"]
-            i = next(k for k, st in enumerate(plan["steps"], 1) if (st["repo"], st["branch"]) == (op["repo"], op["branch"]))
-            release_step(i, plan["steps"][i - 1], a.yes, a.release_type)
+        released, planned = 0, planned_crates(report)
+        while a.execute:
+            batch = next_batch(report, planned, None if a.max_releases is None else a.max_releases - released)
+            if not batch:
+                break
+            names = "; ".join(f"{o['repo']}@{o['branch']} ({', '.join(c['name'] + ' ' + c['version'] for c in o['crates'])})"
+                              for o in batch)
+            if not a.yes:
+                try:
+                    ok = input(f"release {len(batch)} at once: {names}? type 'yes': ") == "yes"
+                except EOFError:
+                    ok = False
+                if not ok:
+                    die(f"confirmation needed for {names}; nothing triggered. Re-run interactively or pass --yes", "paused")
+            log(f"releasing {len(batch)} at once: {names}")
+            by_key = {(st["repo"], st["branch"]): st for st in plan["steps"]}
+            release_batch([by_key[(o["repo"], o["branch"])] for o in batch], a.release_type)
+            released += len(batch)
             plan = build_plan(repo, branch)  # re-read heads and crates.io
             report = status(plan)
     except Stop as e:

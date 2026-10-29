@@ -75,14 +75,22 @@ repos are cloned there (partial clone). No config file exists: each run derives 
    no such branch is a fixed input, only checked to be on crates.io and not yanked.
    `hopr-bindings` comes from `hoprnet/contracts` this way.
 3. **Order from the branch heads.** A repo comes after every repo whose crates it requires.
-4. **Block on stale requirements.** A step is `blocked_repin` while its repo's requirements
-   do not admit the versions released below it. The report lists file, line, current and
-   required requirement. Open a PR with those edits and a refreshed `Cargo.lock`, merge it,
-   and run the script again.
-5. **Release.** `--execute` asks `yes` before each step, runs the repo's release workflow,
-   and continues once the run's `Publish library` step succeeds and the crates show on
-   crates.io. A later failure in the same run (for example `Close release`) does not
-   block the next step. A repo with no release workflow is a manual step.
+4. **Repin first when requirements lag.** A repo whose requirements do not admit the
+   versions released below it needs a `repin` PR (file, line, current, required) before
+   its release. A repo whose head is already published is bumped in that PR and released
+   again.
+5. **Release.** A crate is released unless its head version is already on crates.io; the
+   script skips nothing else. A release waits only for what it needs: a repin, or an
+   upstream crate whose new version its requirement needs because no published version
+   meets it. Everything else is ready together. `--execute` asks `yes` once, triggers all
+   ready releases at the same time, and continues for each repo once its versions show on
+   crates.io. The run's `Publish library` step is only an early failure signal: crates.io
+   decides, and later jobs of the run (for example `Close release`) do not matter. A repo
+   with no release workflow is a manual step.
+   - A run releases only the crates in its first plan. The release workflow bumps the head
+     version after each release (`ci: Bump to version X`), and those new heads are not
+     released in the same run.
+   - `--max-releases N` caps how many repos one run releases.
 6. **Repin the start repo** last, with the same kind of PR.
 
 ### Output

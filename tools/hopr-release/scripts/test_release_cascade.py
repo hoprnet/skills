@@ -21,7 +21,7 @@ def step(repo, crates, todo=None, gaps=(), requires=(), workflow="release.yaml",
     todo = dict(todo or {})
     republish = bool(gaps) and not todo
     return dict(repo=repo, branch=branch, workflow=workflow, crates=sorted(head), head=head, todo=todo,
-                gaps=list(gaps), requires=list(requires), files={c: "Cargo.toml" for c in head}, republish=republish,
+                gaps=list(gaps), requires=list(requires), hard_requires=list(requires), files={c: "Cargo.toml" for c in head}, republish=republish,
                 release_versions=({c: rc.bump_patch(v) for c, v in head.items()} if republish else todo))
 
 
@@ -56,6 +56,55 @@ class Admits(unittest.TestCase):
 
     def test_prerelease_needs_a_prerelease_requirement(self):
         self.assertFalse(rc.admits("1.0.0", "1.1.0-rc.1"))
+
+
+class HardNeeds(unittest.TestCase):
+    published = staticmethod(lambda crate: {"hopr-types": ["2.3.0"], "hopr-utilities": ["0.9.1", "0.9.3"]}[crate])
+
+    def entry(self, crate, req):
+        return dict(file="Cargo.toml", key=crate, crate=crate, req=req)
+
+    def test_a_requirement_met_by_a_published_version_does_not_wait(self):
+        got = rc.hard_needs([self.entry("hopr-types", "2.3.0")], own=set(), releasing={"hopr-types"}, published=self.published)
+        self.assertEqual(got, [])
+
+    def test_a_requirement_only_the_new_release_meets_waits(self):
+        got = rc.hard_needs([self.entry("hopr-types", "2.3.1")], own=set(), releasing={"hopr-types"}, published=self.published)
+        self.assertEqual(got, ["hopr-types"])
+
+    def test_own_crates_and_crates_not_being_released_are_ignored(self):
+        entries = [self.entry("hopr-types", "9.0.0"), self.entry("hopr-utilities", "9.0.0")]
+        self.assertEqual(rc.hard_needs(entries, own={"hopr-types"}, releasing={"hopr-types"}, published=self.published), [])
+
+    def test_a_crate_listed_twice_is_reported_once(self):
+        entries = [self.entry("hopr-types", "2.3.1"), self.entry("hopr-types", "2.4.0")]
+        self.assertEqual(rc.hard_needs(entries, own=set(), releasing={"hopr-types"}, published=self.published), ["hopr-types"])
+
+
+class Batch(unittest.TestCase):
+    def op(self, id, crate, status="ready", kind="release"):
+        return dict(id=id, kind=kind, status=status, repo=crate, branch="b", crates=[dict(name=crate, version="1.0.0")])
+
+    def test_only_planned_crates_are_released(self):
+        # a crate whose head was bumped by CI after an earlier release is not in the first plan
+        report = dict(operations=[self.op("op-1", "hopr-types"), self.op("op-2", "hopr-bindings")])
+        got = rc.next_batch(report, planned={"hopr-types"}, remaining=None)
+        self.assertEqual([o["id"] for o in got], ["op-1"])
+
+    def test_pending_and_non_release_operations_are_skipped(self):
+        report = dict(operations=[self.op("op-1", "a", status="pending"), self.op("op-2", "b", kind="repin"),
+                                  self.op("op-3", "c", kind="release_manual"), self.op("op-4", "d")])
+        got = rc.next_batch(report, planned={"a", "b", "c", "d"}, remaining=None)
+        self.assertEqual([o["id"] for o in got], ["op-4"])
+
+    def test_remaining_caps_the_batch(self):
+        report = dict(operations=[self.op("op-1", "a"), self.op("op-2", "b"), self.op("op-3", "c")])
+        self.assertEqual([o["id"] for o in rc.next_batch(report, planned={"a", "b", "c"}, remaining=2)], ["op-1", "op-2"])
+        self.assertEqual(rc.next_batch(report, planned={"a", "b", "c"}, remaining=0), [])
+
+    def test_planned_crates_are_every_release_crate_of_the_first_plan(self):
+        report = dict(operations=[self.op("op-1", "a"), self.op("op-2", "b", status="pending"), self.op("op-3", "c", kind="repin")])
+        self.assertEqual(rc.planned_crates(report), {"a", "b"})
 
 
 class Operations(unittest.TestCase):
@@ -117,6 +166,20 @@ class Operations(unittest.TestCase):
         ops = rc.operations(plan([step("hopr-api", {"hopr-api": "2.0.0"})], locked={"hopr-api": "2.0.0"},
                                  target={"hopr-api": "2.0.0"}))
         self.assertEqual(ops, [])
+
+    def test_releases_with_no_hard_dependency_are_ready_together(self):
+        a = step("hopr-types", {"hopr-types": "2.3.1"}, todo={"hopr-types": "2.3.1"})
+        b = step("hopr-utilities", {"hopr-utilities": "0.9.4"}, todo={"hopr-utilities": "0.9.4"}, requires=[])
+        b["requires"] = ["hopr-types"]  # it requires hopr-types, but a published version already meets that
+        ops = rc.operations(plan([a, b]))
+        self.assertEqual([o["status"] for o in ops], ["ready", "ready"])
+        self.assertEqual(rc.status(plan([a, b]))["ready_operations"], ["op-1", "op-2"])
+
+    def test_a_hard_requirement_orders_the_release(self):
+        a = step("hopr-types", {"hopr-types": "2.3.1"}, todo={"hopr-types": "2.3.1"})
+        b = step("hopr-utilities", {"hopr-utilities": "0.9.4"}, todo={"hopr-utilities": "0.9.4"}, requires=["hopr-types"])
+        ops = rc.operations(plan([a, b]))
+        self.assertEqual(ops[1]["depends_on"], ["op-1"])
 
     def test_nothing_to_do(self):
         self.assertEqual(rc.operations(plan([step("hopr-api", {"hopr-api": "4.4.0"})])), [])
