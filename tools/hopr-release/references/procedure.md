@@ -99,13 +99,22 @@ rendering.
    with no release workflow is a manual step.
    - A run also releases only the crates in its first plan.
    - `--max-releases N` caps how many repos one run releases.
-6. **Repin the start repo** last, with the same kind of PR. The final operation also
+6. **Update the repo behind each git pin** (hoprnet) before the start repo. The library
+   crates reach the start repo through it (`hopr-lib` and its siblings are git dependencies),
+   so it is a step of the cascade: its branch comes from the pin (`branch = X`, or the default
+   branch when a `rev` pin is on it). It gets a `repin` operation for requirements that do not
+   admit the released versions and for a stale `Cargo.lock`, and it is never released. On
+   v4 that is `hoprnet@release/4.0`; on v5, `hoprnet@master` (it requires `hopr-types` 4.1.0,
+   which does not admit 5.0.0).
+7. **Repin the start repo** last, with the same kind of PR. It waits for the repo behind the
+   git pin, and moves the git revision: `cargo update -p hopr-lib` for a branch pin, an edit of
+   the `rev` for a `rev` pin. The final operation also
    updates lock entries that pin older versions than the released ones, and swaps git-ref
    pins of org crates (`git = ..., branch/rev/tag = ...`) for a released version. A pin whose
    crate has no published version yet is a `blocked` `pin_swap` operation with the reason;
    today that is the case for `hopr-lib` and the other hoprnet crates, which are not on
    crates.io. `[patch]` git entries are only warned about.
-7. **Open the PRs.** `--execute-no-release` opens a draft PR for each ready repin or final
+8. **Open the PRs.** `--execute-no-release` opens a draft PR for each ready repin or final
    operation, without releasing: it creates a branch in a git worktree
    (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
    (inside `nix develop` when the repo has a flake, so the hooks run), commits, pushes and
@@ -155,7 +164,8 @@ Operation kinds:
 | `release` | `crates`, `workflow`, `command`, `republish` | Run the repo's release workflow. `republish` means the head version is already published, so the preceding `repin` bumps it. |
 | `release_manual` | `crates` | The repo has no release workflow. Publish by hand. |
 | `repin` | `edits`, `version_bumps`, `then` | Raise requirements in a library repo (file, line, key, current, required). Needs a PR with a refreshed `Cargo.lock`. |
-| `final_repin` | `edits`, `lock_updates`, `then` | Update the start repo: requirement edits, git-pin swaps (`edits` with `swap: git_to_version`), and lock entries that pin older versions than the released ones (`cargo update -p <crate>`). |
+| `repin` (git-pinned repo) | `edits`, `lock_updates`, `then` | The repo behind a git pin (hoprnet): requirement edits and a lock refresh, without a version bump or a release. |
+| `final_repin` | `edits`, `lock_updates`, `git_updates`, `then` | Update the start repo: requirement edits, git-pin swaps (`edits` with `swap: git_to_version`), and lock entries that pin older versions than the released ones (`cargo update -p <crate>`). |
 | `pin_swap` | `blocked_reason` | A git pin that cannot be swapped yet. `status` is `blocked`. |
 
 Run the script once per start repo. `--from edge-client@release/4.1` and

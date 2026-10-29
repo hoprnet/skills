@@ -33,6 +33,13 @@ stands in for it. One run also releases only the crates in its first plan.
 A step is blocked while a repo's own requirements do not admit the versions released below
 it. Repin that repo first. A release publishes to crates.io and cannot be undone.
 
+Repos pinned by git (hoprnet). The library crates reach the start repo through the repo behind
+each git pin (hoprnet: hopr-lib and its siblings), so that repo is a step: its branch comes
+from the pin (`branch = X`, or the default branch when a `rev` pin is on it), it gets a repin
+for requirements that do not admit the released versions plus a refresh of its own Cargo.lock,
+and it is never released. The start repo's final operation waits for it and moves the git
+revision (`cargo update -p hopr-lib`; a `rev` pin is edited to the branch head).
+
 Git-ref pins. A dependency of the start repo pinned to a git ref of an org repo (git = ...,
 branch/rev/tag = ...) is planned for a swap to a released version. When crates.io has a
 version at or above the locked one, the swap joins the final operation. Otherwise a
@@ -349,6 +356,25 @@ def git_pins(ms):
     return out
 
 
+def group_git_pins(pins, sources, rev_branch):
+    """Group the start repo's git pins by (org repo, branch). A branch pin gives its branch; a rev pin gives the
+    branch the rev is on (rev_branch(repo, rev)), or is left out; tags are left out. -> [{repo, branch, crates, locked, style}]"""
+    groups = {}
+    for p in pins:
+        m = re.match(r"https?://github\.com/([^/]+)/([^/#?]+)", p["git"])
+        if not m or m.group(1).lower() != ORG:
+            continue
+        repo = m.group(2).removesuffix(".git")
+        kind, _, val = p["ref"].partition(" ")
+        branch = val if kind == "branch" else rev_branch(repo, val) if kind == "rev" else None
+        if not branch:
+            continue
+        g = groups.setdefault((repo, branch), dict(repo=repo, branch=branch, crates=[], locked=None, style=kind))
+        g["crates"].append(p["crate"])
+        g["locked"] = g["locked"] or (sources.get(p["crate"]) or (None, None))[1]
+    return [dict(g, crates=sorted(set(g["crates"]))) for _, g in sorted(groups.items())]
+
+
 def patch_pins(ms):
     """Crates with a git entry under [patch.*]. The script does not edit those."""
     return sorted({spec.get("package", key) for m in ms.values() for reg in m.get("patch", {}).values()
@@ -398,7 +424,7 @@ def discover(repo, branch):
         c = byname[x[0]]
         return ([p for p in c if p["version"] == x[1]] if len(x) > 1 else c)[0]
 
-    owned, pinned, seen = {}, {}, set()
+    owned, pinned, git_sources, seen = {}, {}, {}, set()
     stack = [p for p in pk if "source" not in p]  # the start repo's own packages
     while stack:
         n = stack.pop()
@@ -412,6 +438,9 @@ def discover(repo, branch):
             if src.startswith("git+"):
                 if f"github.com/{ORG}/" in src.lower():
                     pinned[c["name"]] = c["version"]
+                    m = re.match(r"git\+([^?#]+)(?:\?[^#]*)?#(.+)", src)
+                    if m:
+                        git_sources[c["name"]] = (m.group(1), m.group(2))
                 stack.append(c)
             elif src.startswith("registry+"):
                 r = org_repo_of(c["name"])
@@ -421,7 +450,7 @@ def discover(repo, branch):
                     stack.append(c)
             else:
                 stack.append(c)
-    return owned, pinned
+    return owned, pinned, git_sources
 
 
 def branch_for(repo, start_repo, start_branch):
@@ -448,7 +477,7 @@ def build_plan(start_repo, start_branch, planned=None):
     if not has_ref(start_repo, start_branch):
         die(f"{start_repo}: no branch origin/{start_branch}")
     log(f"discovering {ORG} crates from {start_repo}@{start_branch} (crates.io lookups are cached) ...")
-    owned, pinned = discover(start_repo, start_branch)
+    owned, pinned, git_sources = discover(start_repo, start_branch)
     steps, fixed = {}, []
     for crate, (repo, locked) in sorted(owned.items()):
         try:
@@ -513,7 +542,31 @@ def build_plan(start_repo, start_branch, planned=None):
             swap_to = None
         pins.append(dict(pin, line=line_of(start_repo, f"origin/{start_branch}", pin["file"], pin["key"], pin.get("table")),
                          locked=locked, target=swap_to))
+    upstream, git_updates = [], []
+    for g in group_git_pins(git_pins(start_ms), git_sources, rev_branch=branch_of_rev):
+        try:
+            ensure(g["repo"])
+        except Stop:
+            continue
+        ref = f"origin/{g['branch']}"
+        if not has_ref(g["repo"], g["branch"]):
+            continue
+        in_lock = {}
+        for pk_ in tomllib.loads(git(g["repo"], "show", f"{ref}:Cargo.lock"))["package"]:
+            if pk_["name"] in owned and vkey(pk_["version"]) > vkey(in_lock.get(pk_["name"], "0.0.0")):
+                in_lock[pk_["name"]] = pk_["version"]
+        upstream.append(dict(repo=g["repo"], branch=g["branch"], gaps=gaps(dep_entries(manifests(g["repo"], ref)), target, owned),
+                             lock_updates=[dict(crate=c, locked=in_lock[c], target=target[c]) for c in sorted(in_lock)
+                                           if c in target and vkey(target[c]) > vkey(in_lock[c])]))
+        head = git(g["repo"], "rev-parse", ref).strip()
+        if g["locked"] and head != g["locked"]:
+            rev_edits = [dict(file=p["file"], line=line_of(start_repo, f"origin/{start_branch}", p["file"], p["key"], p.get("table")),
+                              key=p["key"], crate=p["crate"], current=p["ref"], required=head, swap="git_rev")
+                         for p in git_pins(start_ms) if p["crate"] in g["crates"] and p["ref"].startswith("rev ")]
+            git_updates.append(dict(repo=g["repo"], branch=g["branch"], crates=g["crates"], locked=g["locked"][:9], head=head[:9],
+                                    edits=rev_edits))
     return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned), pins=pins,
+                upstream=upstream, git_updates=git_updates,
                 patched=patch_pins(start_ms), bump_heads=bump_heads,
                 repin=gaps(start_entries, target, owned), locked={c: v for c, (_, v) in owned.items()}, target=target)
 
@@ -524,6 +577,13 @@ def crates_with_gaps(crates, files, gap_list):
     gap_files = {g["file"] for g in gap_list}
     direct = [c for c in crates if files[c] in gap_files]
     return sorted(crates) if "Cargo.toml" in gap_files and "Cargo.toml" not in files.values() else direct
+
+
+def branch_of_rev(repo, rev):
+    """The repo's default branch when `rev` is on it, else None."""
+    b = default_branch(repo)
+    ok = run("git", "-C", str(WORKSPACE / repo), "merge-base", "--is-ancestor", rev, f"origin/{b}", check=False)[0] == 0
+    return b if ok else None
 
 
 def gaps(entries, target, owned):
@@ -776,19 +836,33 @@ def operations(plan):
                      command=(f"gh workflow run {s['workflow']} --repo {ORG}/{s['repo']} --ref {s['branch']} -f release_type=patch"
                               if s["workflow"] else None))
             rel.update({c: op["id"] for c in crates})
+    # a repo the start repo pins by git (hoprnet) takes the released versions before the start repo moves to it
+    up_ids = []
+    for u in plan.get("upstream", []):
+        ed = edits(u["repo"], u["branch"], u["gaps"])
+        if ed or u["lock_updates"]:
+            named = {g["crate"] for g in u["gaps"]} | {x["crate"] for x in u["lock_updates"]}
+            op = new("repin", repo=u["repo"], branch=u["branch"], edits=ed, lock_updates=u["lock_updates"], version_bumps=[],
+                     depends_on=sorted({rel[c] for c in named if c in rel}),
+                     description=f"update {u['repo']}@{u['branch']}, which the start repo pins by git, to the released versions",
+                     then="open a PR with these edits and a refreshed Cargo.lock, then merge it")
+            up_ids.append(op["id"])
     # the start repo's lock pins older versions even when its requirements already admit the new ones
     lock_updates = [dict(crate=c, locked=v, target=plan["target"][c]) for c, v in sorted(plan.get("locked", {}).items())
                     if c in plan.get("target", {}) and vkey(plan["target"][c]) > vkey(v)]
     pins = plan.get("pins", [])
     swaps = [dict(file=p["file"], line=p["line"], key=p["key"], crate=p["crate"], current=f"git {p['git']} {p['ref']}",
                   required=p["target"], swap="git_to_version") for p in pins if p["target"]]
-    if plan["repin"] or lock_updates or swaps:
+    git_updates = plan.get("git_updates", [])
+    if plan["repin"] or lock_updates or swaps or git_updates:
         sr, sb = plan["start"]
         named = {g["crate"] for g in plan["repin"]} | {u["crate"] for u in lock_updates}
-        new("final_repin", repo=sr, branch=sb, edits=edits(sr, sb, plan["repin"]) + swaps, lock_updates=lock_updates,
-            version_bumps=[], depends_on=sorted({rel[c] for c in named if c in rel}),
+        rev_edits = [e for g in git_updates for e in g.get("edits", [])]
+        new("final_repin", repo=sr, branch=sb, edits=edits(sr, sb, plan["repin"]) + swaps + rev_edits, lock_updates=lock_updates,
+            git_updates=git_updates, version_bumps=[], depends_on=sorted({rel[c] for c in named if c in rel} | set(up_ids)),
             description=f"update {sr}@{sb} to the released versions"
-                        + (f" (cargo update -p {' -p '.join(u['crate'] for u in lock_updates)})" if lock_updates else ""),
+                        + (f" (cargo update -p {' -p '.join(u['crate'] for u in lock_updates)})" if lock_updates else "")
+                        + (f" and to the current {', '.join(sorted({g['repo'] + '@' + g['branch'] for g in git_updates}))}" if git_updates else ""),
             then="open a PR with the requirement edits and a refreshed Cargo.lock, then merge it")
     for p in pins:
         if not p["target"]:
@@ -900,9 +974,23 @@ def swap_git_text(text, e):
     return "\n".join(lines)
 
 
+def rev_text(text, e):
+    """Point a git pin's rev at a new commit, on the pin's line."""
+    lines = text.split("\n")
+    i = e["line"] - 1
+    found = lines[i] if 0 <= i < len(lines) else "(no such line)"
+    old = e["current"].partition(" ")[2]
+    if f'rev = "{old}"' not in found or e["key"] not in found:
+        die(f"{e['file']}:{e['line']}: expected {e['key']} with rev \"{old}\", found: {found.strip()}")
+    lines[i] = found.replace(f'rev = "{old}"', f'rev = "{e["required"]}"', 1)
+    return "\n".join(lines)
+
+
 def edit_text(text, e):
     if e.get("swap") == "git_to_version":
         return swap_git_text(text, e)
+    if e.get("swap") == "git_rev":
+        return rev_text(text, e)
     lines = text.split("\n")
     i = e["line"] - 1
     found = lines[i] if 0 <= i < len(lines) else "(no such line)"
@@ -929,6 +1017,7 @@ def lock_commands(op):
     cmds = ["cargo metadata --format-version 1 >/dev/null"]  # rewrites the lock for the edited requirements and versions
     cmds += [f"cargo update -p {c}" for c in dict.fromkeys(e["crate"] for e in op.get("edits", []))]
     cmds += [f"cargo update -p {u['crate']}@{u['locked']} --precise {u['target']}" for u in op.get("lock_updates", [])]
+    cmds += [f"cargo update -p {c}" for c in dict.fromkeys(c for g in op.get("git_updates", []) for c in g["crates"])]
     return cmds
 
 
@@ -1008,6 +1097,7 @@ def op_detail(o):
     parts = [f"{e['key']} {e['current']} -> {e['required']}" for e in o.get("edits", [])]
     parts += [f"bump {b['crate']} {b['current']} -> {b['suggested']}" for b in o.get("version_bumps", [])]
     parts += [f"lock {u['crate']} {u['locked']} -> {u['target']}" for u in o.get("lock_updates", [])]
+    parts += [f"git {c} {g['locked']} -> {g['head']} ({g['repo']}@{g['branch']})" for g in o.get("git_updates", []) for c in g["crates"]]
     return "; ".join(parts)
 
 

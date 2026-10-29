@@ -26,9 +26,10 @@ def step(repo, crates, todo=None, gaps=(), requires=(), workflow="release.yaml",
                 release_versions=({c: rc.bump_patch(v) for c, v in head.items()} if republish else todo))
 
 
-def plan(steps, repin=(), fixed=(), locked=None, target=None, pins=()):
+def plan(steps, repin=(), fixed=(), locked=None, target=None, pins=(), upstream=(), git_updates=()):
     return dict(start=("edge-client", "main"), steps=steps, fixed=list(fixed), pinned=[], repin=list(repin),
-                locked=locked or {}, target=target or {}, pins=list(pins))
+                locked=locked or {}, target=target or {}, pins=list(pins), upstream=list(upstream),
+                git_updates=list(git_updates))
 
 
 class Admits(unittest.TestCase):
@@ -819,6 +820,88 @@ class AnonymousForge(unittest.TestCase):
         self.assertIn("GH_TOKEN", str(e.exception))
         with self.assertRaises(rc.Stop):
             rc.AnonForge().create_pr("r", "h", "b", "t", "x")
+
+
+class GitRefs(unittest.TestCase):
+    def pin(self, crate, ref, git="https://github.com/hoprnet/hoprnet"):
+        return dict(file="Cargo.toml", line=97, table="dependencies", key=crate, crate=crate, git=git, ref=ref)
+
+    sources = {"hopr-lib": ("https://github.com/hoprnet/hoprnet", "9e7372b04aaa"),
+               "hopr-utils-session": ("https://github.com/hoprnet/hoprnet", "9e7372b04aaa")}
+
+    def test_branch_pins_of_one_repo_are_grouped_with_the_branch_from_the_pin(self):
+        pins = [self.pin("hopr-lib", "branch release/4.0"), self.pin("hopr-utils-session", "branch release/4.0")]
+        got = rc.group_git_pins(pins, self.sources, rev_branch=lambda repo, rev: None)
+        self.assertEqual(got, [dict(repo="hoprnet", branch="release/4.0", crates=["hopr-lib", "hopr-utils-session"],
+                                    locked="9e7372b04aaa", style="branch")])
+
+    def test_a_rev_pin_uses_the_branch_the_rev_is_on(self):
+        got = rc.group_git_pins([self.pin("hopr-lib", "rev af80993c")], self.sources, rev_branch=lambda repo, rev: "master")
+        self.assertEqual((got[0]["branch"], got[0]["style"]), ("master", "rev"))
+
+    def test_a_rev_that_is_on_no_known_branch_and_a_tag_are_left_out(self):
+        pins = [self.pin("hopr-lib", "rev deadbeef"), self.pin("hopr-utils-session", "tag v1.0.0")]
+        self.assertEqual(rc.group_git_pins(pins, self.sources, rev_branch=lambda repo, rev: None), [])
+
+    def test_pins_of_other_owners_are_ignored(self):
+        got = rc.group_git_pins([self.pin("x", "branch main", git="https://github.com/somebody/else")], self.sources,
+                                rev_branch=lambda repo, rev: None)
+        self.assertEqual(got, [])
+
+    def test_rev_text_replaces_the_pinned_revision_on_its_line(self):
+        text = 'a = 1\nhopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "af80993c", default-features = false }\n'
+        e = dict(file="Cargo.toml", line=2, key="hopr-lib", crate="hopr-lib", current="rev af80993c", required="88b93587", swap="git_rev")
+        self.assertIn('rev = "88b93587"', rc.edit_text(text, e))
+        self.assertNotIn("af80993c", rc.edit_text(text, e))
+        with self.assertRaises(rc.Stop):
+            rc.edit_text(text, dict(e, current="rev 11111111"))
+
+
+class UpstreamOps(unittest.TestCase):
+    def upstream(self, **kw):
+        base = dict(repo="hoprnet", branch="release/4.0",
+                    gaps=[dict(file="Cargo.toml", table="workspace.dependencies", key="hopr-types", crate="hopr-types",
+                               req="2.3.0", want="2.4.0")],
+                    lock_updates=[dict(crate="hopr-types", locked="2.3.0", target="2.4.0")])
+        base.update(kw)
+        return base
+
+    def test_the_repo_behind_a_git_pin_is_updated_after_the_releases_it_needs(self):
+        types = step("hopr-types", {"hopr-types": "2.4.0"}, todo={"hopr-types": "2.4.0"})
+        ops = rc.operations(plan([types], upstream=[self.upstream()]))
+        self.assertEqual([(o["kind"], o["repo"]) for o in ops], [("release", "hopr-types"), ("repin", "hoprnet")])
+        up = ops[1]
+        self.assertEqual(up["depends_on"], ["op-1"])
+        self.assertEqual(up["edits"][0]["required"], "2.4.0")
+        self.assertEqual(up["lock_updates"], [dict(crate="hopr-types", locked="2.3.0", target="2.4.0")])
+        self.assertEqual(up["version_bumps"], [])
+        self.assertNotIn("release", [o["kind"] for o in ops if o["repo"] == "hoprnet"])  # hoprnet crates are not released
+
+    def test_only_a_stale_lock_is_still_an_operation(self):
+        ops = rc.operations(plan([], upstream=[self.upstream(gaps=[])]))
+        self.assertEqual([(o["kind"], o["repo"]) for o in ops], [("repin", "hoprnet")])
+        self.assertEqual(ops[0]["edits"], [])
+
+    def test_nothing_stale_means_no_operation(self):
+        self.assertEqual(rc.operations(plan([], upstream=[self.upstream(gaps=[], lock_updates=[])])), [])
+
+    def test_the_start_repo_waits_for_the_upstream_repo_and_refreshes_the_git_revision(self):
+        types = step("hopr-types", {"hopr-types": "2.4.0"}, todo={"hopr-types": "2.4.0"})
+        git = dict(repo="hoprnet", branch="release/4.0", crates=["hopr-lib", "hopr-utils-session"], locked="9e7372b04", head="88b935877")
+        ops = rc.operations(plan([types], upstream=[self.upstream()], git_updates=[git]))
+        final = ops[-1]
+        self.assertEqual(final["kind"], "final_repin")
+        self.assertEqual(final["depends_on"], ["op-2"])
+        self.assertEqual(final["git_updates"], [git])
+        cmds = rc.lock_commands(final)
+        self.assertIn("cargo update -p hopr-lib", cmds)
+        self.assertIn("cargo update -p hopr-utils-session", cmds)
+
+    def test_a_branch_ahead_of_the_locked_revision_alone_makes_a_ready_final_operation(self):
+        git = dict(repo="hoprnet", branch="release/4.0", crates=["hopr-lib"], locked="9e7372b04", head="88b935877")
+        ops = rc.operations(plan([], git_updates=[git]))
+        self.assertEqual([(o["kind"], o["status"]) for o in ops], [("final_repin", "ready")])
+        self.assertIn("git hopr-lib 9e7372b04 -> 88b935877", rc.op_detail(ops[0]))
 
 
 class Layers(unittest.TestCase):
