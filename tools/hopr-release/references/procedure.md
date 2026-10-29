@@ -135,7 +135,7 @@ rendering.
    operation, without releasing: it creates a branch in a git worktree
    (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
    (inside `nix develop` when the repo has a flake, so the hooks run), commits, pushes and
-   opens the PR. It never merges. A branch name is derived from the edits, so a re-run finds
+   opens the PR. It never merges. A branch name is a hash of everything the PR holds (edits, version bumps, lock updates, the git revision move and the base commit), so a re-run finds
    the open PR. `--execute` releases first, then does the same.
 
 ### Output

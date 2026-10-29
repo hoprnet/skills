@@ -310,6 +310,22 @@ class ApplyOps(unittest.TestCase):
         self.assertNotEqual(rc.branch_name(a), rc.branch_name(c))
         self.assertTrue(rc.branch_name(a).startswith("chore/release-cascade-repin-"))
 
+    def test_branch_name_changes_with_the_git_update_and_with_the_base_commit(self):
+        a = self.op()
+        b = self.op(git_updates=[dict(repo="hoprnet", branch="release/4.0", crates=["hopr-lib"], locked="9e7372b04", head="88b935877")])
+        c = self.op(git_updates=[dict(repo="hoprnet", branch="release/4.0", crates=["hopr-lib"], locked="9e7372b04", head="77ac01da0")])
+        self.assertEqual(rc.branch_name(a, "base1"), rc.branch_name(self.op(), "base1"))
+        self.assertNotEqual(rc.branch_name(a, "base1"), rc.branch_name(b, "base1"))   # the git update counts
+        self.assertNotEqual(rc.branch_name(b, "base1"), rc.branch_name(c, "base1"))   # so does the new head
+        self.assertNotEqual(rc.branch_name(a, "base1"), rc.branch_name(a, "base2"))   # and the base commit
+
+    def test_pr_text_lists_the_git_revision_move(self):
+        op = self.op(git_updates=[dict(repo="hoprnet", branch="release/4.0", crates=["hopr-lib", "hopr-utils-session"],
+                                       locked="9e7372b04", head="77ac01da0")])
+        title, body = rc.pr_text(op, ("hoprd", "release/4.1"))
+        self.assertIn("git: hopr-lib 9e7372b04 -> 77ac01da0 (hoprnet@release/4.0)", body)
+        self.assertIn("git: hopr-utils-session 9e7372b04 -> 77ac01da0 (hoprnet@release/4.0)", body)
+
     def test_pr_text_names_the_crates_and_the_versions(self):
         title, body = rc.pr_text(self.op(), ("edge-client", "release/4.1"))
         self.assertIn("hopr-types", title)
@@ -360,6 +376,9 @@ class GitFlow(unittest.TestCase):
         os.environ.clear(); os.environ.update(self.saved[2])
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def base_sha(self):
+        return self.sh("git", "rev-parse", "origin/main").stdout.strip()
+
     def stub_shell(self, wt, cmds):
         self.cmds.append(cmds)  # a real run would update Cargo.lock here
         (Path(wt) / "Cargo.lock").write_text("# lock updated\n")
@@ -367,7 +386,7 @@ class GitFlow(unittest.TestCase):
     def test_edits_are_committed_on_a_branch_pushed_and_a_draft_pr_is_opened(self):
         op = ApplyOps().op()
         result = rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
-        branch = rc.branch_name(op)
+        branch = rc.branch_name(op, self.base_sha())
         self.assertEqual(result["url"], "https://github.com/hoprnet/hopr-api/pull/1")
         self.assertEqual(result["state"], "opened")
         # the branch exists on the remote with the edited manifest and the updated lock
@@ -386,7 +405,7 @@ class GitFlow(unittest.TestCase):
 
     def test_a_leftover_local_branch_and_worktree_from_a_failed_attempt_are_replaced(self):
         op = ApplyOps().op()
-        branch = rc.branch_name(op)
+        branch = rc.branch_name(op, self.base_sha())
         wt = self.tmp / "hopr-api-worktrees" / branch.replace("/", "-")
         self.sh("git", "worktree", "add", "-q", "-b", branch, str(wt), "origin/main")
         (wt / "stray.txt").write_text("left over")
@@ -398,12 +417,22 @@ class GitFlow(unittest.TestCase):
 
     def test_a_pushed_branch_with_no_pr_only_opens_the_pr(self):
         op = ApplyOps().op()
-        branch = rc.branch_name(op)
+        branch = rc.branch_name(op, self.base_sha())
         self.sh("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
         result = rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
         self.assertEqual((result["state"], result["url"]), ("opened", "https://github.com/hoprnet/hopr-api/pull/1"))
         self.assertEqual(self.cmds, [])  # no edits, no cargo: the branch was already pushed
         self.assertEqual(self.forge.prs[0][1], branch)
+
+    def test_a_branch_pushed_by_an_earlier_run_with_other_content_is_not_reused(self):
+        old = ApplyOps().op()                                   # the earlier run had no git update
+        old_branch = rc.branch_name(old, self.base_sha())
+        self.sh("git", "push", "-q", "origin", f"HEAD:refs/heads/{old_branch}")
+        new = ApplyOps().op(git_updates=[dict(repo="hoprnet", branch="release/4.0", crates=["hopr-lib"], locked="9e7372b04", head="77ac01da")])
+        result = rc.apply_op(new, ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertNotEqual(result["branch"], old_branch)
+        self.assertEqual(result["state"], "opened")
+        self.assertTrue(any("cargo update -p hopr-lib" in c for c in self.cmds[0]))   # the new content was applied
 
     def test_an_existing_open_pr_is_reported_and_nothing_is_pushed_again(self):
         self.forge.find_pr = lambda repo, head: "https://github.com/hoprnet/hopr-api/pull/9"
