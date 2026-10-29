@@ -83,6 +83,7 @@ turn the list into a workflow, or run the releases. Fields:
                    final_repin: edits (also git-pin swaps), lock_updates (crate, locked, target), then
                    pin_swap: blocked_reason (a git pin with no published version yet)
   git_pinned_swaps git pins kept because their repo is a step that is never released
+  later_heads      real unpublished heads outside this run's first plan (run again to release them)
   bump_heads       heads that are only CI's version bump: crate, head, newest published
   pull_requests    PRs opened or found by --execute / --execute-no-release
                    (operation, repo, base, branch, url, state opened | exists)
@@ -253,7 +254,8 @@ def manifests(repo, ref):
 
 
 def packages(ms):
-    """{crate: {version, file}} of every publishable package. `file` holds the version string."""
+    """{crate: {version, file, manifest}} of every publishable package. `file` holds the version string (the workspace
+    root for an inherited version); `manifest` is the crate's own Cargo.toml."""
     ws = next(((f, m["workspace"]["package"]["version"]) for f, m in ms.items()
                if isinstance(m.get("workspace", {}).get("package", {}).get("version"), str)), (None, None))
     out = {}
@@ -264,7 +266,7 @@ def packages(ms):
         v = p.get("version")
         file, v = (ws if isinstance(v, dict) and v.get("workspace") else (f, v))
         if isinstance(v, str):
-            out[p["name"]] = dict(version=v, file=file)
+            out[p["name"]] = dict(version=v, file=file, manifest=f)
     return out
 
 
@@ -283,18 +285,33 @@ def only_cargo_files(files):
     return all(Path(f).name in ("Cargo.toml", "Cargo.lock") for f in files)
 
 
+def only_version_changes(diff):
+    """True when every changed line of a Cargo.toml diff is a `version = "..."` line."""
+    for line in diff.splitlines():
+        if line[:1] in "+-" and not line.startswith(("+++", "---")) and not re.match(r'^[+-]\s*version\s*=\s*"[^"]*"\s*(#.*)?$', line):
+            return False
+    return True
+
+
 def bump_only(repo, ref, version):
-    """True when `version` is only CI's post-release bump: set by a `ci: Bump to version` commit, with nothing
-    but Cargo.toml and Cargo.lock changed since. Such a head has no new code and is not a release."""
+    """True when `version` is only CI's post-release bump: set by a `ci: Bump to version` commit, and nothing since that
+    commit (the commit itself included) changed anything but the version lines of a Cargo.toml and Cargo.lock.
+    Such a head has no new code and is not a release."""
     rows = git(repo, "log", "--format=%H%x09%s", "-n", "300", ref).splitlines()
     h = find_bump([tuple(r.split("\t", 1)) for r in rows if "\t" in r], version)
-    return bool(h) and only_cargo_files(git(repo, "diff", "--name-only", h, ref).split())
+    if not h:
+        return False
+    rc_, names = run("git", "-C", str(WORKSPACE / repo), "diff", "--name-only", f"{h}^", ref, check=False)
+    if rc_ != 0 or not only_cargo_files(names.split()):
+        return False
+    return all(only_version_changes(git(repo, "diff", "--no-color", "-U0", f"{h}^", ref, "--", f))
+               for f in names.split() if Path(f).name == "Cargo.toml")
 
 
 def pick_latest_compatible(versions, head):
     """Highest release in `versions` on the same breaking line as `head` (same major, or same minor for 0.x)."""
-    a, b, _ = (ver(head) + (0, 0, 0))[:3]
-    same = [v for v in versions if "-" not in v and (ver(v) + (0, 0, 0))[:1] == (a,) and (a > 0 or (ver(v) + (0, 0, 0))[1] == b)]
+    line = breaking_line(head)
+    same = [v for v in versions if "-" not in v and breaking_line(v) == line]
     return max(same, key=ver) if same else None
 
 
@@ -516,8 +533,8 @@ def build_plan(start_repo, start_branch, planned=None):
         if miss:
             die(f"{repo}@{b}: crates.io lists {repo} as the repository of {miss}, but the branch has no such package")
         plan[(repo, b)] = dict(repo=repo, branch=b, crates=sorted(crates), head={c: head[c] for c in crates},
-                               files={c: pk[c]["file"] for c in crates},
-                               entries=dep_entries(ms), workflow=release_workflow(repo, b))
+                               files={c: pk[c]["file"] for c in crates}, manifests={c: pk[c]["manifest"] for c in crates},
+                               inherits=inherited_keys(ms), entries=dep_entries(ms), workflow=release_workflow(repo, b))
     # order: a repo comes after every repo whose crates it requires, read from the branch heads
     crate_step = {c: k for k, s in plan.items() for c in s["crates"]}
     after = {k: {crate_step[e["crate"]] for e in s["entries"] if e["crate"] in crate_step} - {k} for k, s in plan.items()}
@@ -530,17 +547,18 @@ def build_plan(start_repo, start_branch, planned=None):
     target = {c: v for s in plan.values() for c, v in s["head"].items()}
     target.update({f["crate"]: f["version"] for f in fixed})
     steps = [plan[k] for k in order]
-    releasing, bump_heads = set(), []
+    releasing, bump_heads, later_heads = set(), [], []
     for k in order:
         s = plan[k]
         s["requires"] = sorted({e["crate"] for e in s["entries"] if e["crate"] in crate_step and crate_step[e["crate"]] != k})
         s["todo"] = {c: v for c, v in s["head"].items() if not is_published(c, v)}
-        # a head that is only CI's post-release bump (or, in a later plan of one run, any head outside the first
-        # plan) is not a release; the newest published version stands in for it
-        for c in [c for c, v in s["todo"].items()
-                  if (planned is not None and (c, v) not in planned) or bump_only(s["repo"], f"origin/{s['branch']}", v)]:
-            bump_heads.append(dict(crate=c, head=s["todo"].pop(c), published=pick_latest_compatible(published_versions(c), s["head"][c])))
-            target[c] = bump_heads[-1]["published"] or s["head"][c]
+        # a head that is only CI's post-release bump is not a release; a real head outside the run's first plan waits for
+        # the next run; the newest published version stands in for both
+        cls = classify_heads(s, planned, lambda c, v: bump_only(s["repo"], f"origin/{s['branch']}", v), published_versions)
+        s["todo"] = cls["todo"]
+        bump_heads += cls["bump_heads"]
+        later_heads += cls["later_heads"]
+        target.update(cls["stand_in"])
         s["gaps"] = gaps(s["entries"], target, owned)
         # a published crate whose requirements lag must be bumped and released again, also next to an unpublished sibling
         pb = plan_bumps(s, all_versions, lambda dep, key: reexports_dep(s["repo"], f"origin/{s['branch']}", dep, key))
@@ -570,10 +588,7 @@ def build_plan(start_repo, start_branch, planned=None):
         ref = f"origin/{g['branch']}"
         if not has_ref(g["repo"], g["branch"]):
             continue
-        in_lock = {}
-        for pk_ in tomllib.loads(git(g["repo"], "show", f"{ref}:Cargo.lock"))["package"]:
-            if pk_["name"] in owned and vkey(pk_["version"]) > vkey(in_lock.get(pk_["name"], "0.0.0")):
-                in_lock[pk_["name"]] = pk_["version"]
+        in_lock = locked_org_versions(g["repo"], ref, owned)
         upstream.append(dict(repo=g["repo"], branch=g["branch"], gaps=gaps(dep_entries(manifests(g["repo"], ref)), target, owned),
                              lock_updates=[dict(crate=c, locked=in_lock[c], target=target[c]) for c in sorted(in_lock)
                                            if c in target and vkey(target[c]) > vkey(in_lock[c])]))
@@ -583,9 +598,10 @@ def build_plan(start_repo, start_branch, planned=None):
                               key=p["key"], crate=p["crate"], current=p["ref"], required=head, swap="git_rev")
                          for p in git_pins(start_ms) if p["crate"] in g["crates"] and p["ref"].startswith("rev ")]
             git_updates.append(dict(repo=g["repo"], branch=g["branch"], crates=g["crates"], locked=g["locked"][:9], head=head[:9],
-                                    edits=rev_edits))
+                                    edits=rev_edits,
+                                    specs={c: f"{git_sources[c][0]}#{c}@{pinned[c]}" for c in g["crates"] if c in git_sources and c in pinned}))
     return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned), pins=pins,
-                upstream=upstream, git_updates=git_updates,
+                upstream=upstream, git_updates=git_updates, later_heads=later_heads,
                 patched=patch_pins(start_ms), bump_heads=bump_heads,
                 repin=gaps(start_entries, target, owned), locked={c: v for c, (_, v) in owned.items()}, target=target)
 
@@ -613,15 +629,33 @@ def reexports_dep(repo, ref, dep, key):
     return run("git", "-C", str(WORKSPACE / repo), "grep", "-q", "-E", rf"pub use ({idents})(::|;| as )", ref, "--", "*.rs", check=False)[0] == 0
 
 
+def classify_heads(s, planned, bump_only_fn, published_of):
+    """Split a step's unpublished heads. A head that is only CI's bump and has a published stand-in is a bump head (not
+    released). A real head outside the run's first plan is a later release (reported, not released now). The rest stay
+    releases. -> {todo, bump_heads, later_heads, stand_in}"""
+    todo, bump_heads, later_heads, stand_in = dict(s["todo"]), [], [], {}
+    for c, v in list(todo.items()):
+        pub = pick_latest_compatible(published_of(c), s["head"][c])
+        if bump_only_fn(c, v):
+            if pub:  # with no published version to stand in for it, the head is the first release of the crate
+                bump_heads.append(dict(crate=c, head=todo.pop(c), published=pub))
+                stand_in[c] = pub
+        elif planned is not None and (c, v) not in planned:
+            later_heads.append(dict(crate=c, head=todo.pop(c), published=pub))
+            stand_in[c] = pub or v
+    return dict(todo=todo, bump_heads=bump_heads, later_heads=later_heads, stand_in=stand_in)
+
+
 def plan_bumps(s, versions_of, reexports):
     """Which crates of a step need a new version, and which. A published crate with a stale requirement is bumped; a
     crate that re-exports a dependency whose version moved to another compatibility line gets the next breaking
     version (its public API changes with it), not a patch. -> {todo, bump_crates, release_versions, bump_info}"""
     todo, info = dict(s["todo"]), {}
-    bump = set(crates_with_gaps([c for c in s["head"] if c not in todo], s["files"], s["gaps"]))
+    manifests_, inherits = s.get("manifests", s["files"]), s.get("inherits", {})
+    bump = set(crates_with_gaps([c for c in s["head"] if c not in todo], manifests_, s["gaps"], inherits))
     breaking = [g for g in s["gaps"] if is_breaking(g["req"], g["want"]) and reexports(g["crate"], g["key"])]
     proposed = {}
-    for c in crates_with_gaps(sorted(s["head"]), s["files"], breaking):
+    for c in crates_with_gaps(sorted(s["head"]), manifests_, breaking, inherits):
         head, latest = s["head"][c], max(versions_of(c), key=vkey, default=s["head"][c])
         if c in todo and breaking_line(head) != breaking_line(latest):
             continue  # the head is already on a newer line than anything published
@@ -637,19 +671,46 @@ def plan_bumps(s, versions_of, reexports):
     return dict(todo=todo, bump_crates=sorted(bump), release_versions=release, bump_info=info)
 
 
-def crates_with_gaps(crates, files, gap_list):
-    """Published crates whose manifest holds a stale requirement. A gap in the root manifest of a virtual
-    workspace (workspace.dependencies) may touch every crate, so it counts for all of them."""
-    gap_files = {g["file"] for g in gap_list}
-    direct = [c for c in crates if files[c] in gap_files]
-    return sorted(crates) if "Cargo.toml" in gap_files and "Cargo.toml" not in files.values() else direct
+def inherited_keys(ms):
+    """{manifest path: the dependency keys it takes from [workspace.dependencies] with `workspace = true`}."""
+    out = {}
+    for f, m in ms.items():
+        tables = [m.get(t) for t in DEP_TABLES] + [tgt.get(t) for tgt in m.get("target", {}).values() for t in DEP_TABLES]
+        out[f] = {k for t in tables for k, spec in (t or {}).items() if isinstance(spec, dict) and spec.get("workspace")}
+    return out
+
+
+def crates_with_gaps(crates, manifests_, gap_list, inherits):
+    """Published crates a stale requirement touches: the crate whose own manifest holds it, and for a stale
+    [workspace.dependencies] entry the crates that inherit that key (`workspace = true`)."""
+    out = set()
+    for g in gap_list:
+        if g.get("table") == "workspace.dependencies":
+            out |= {c for c in crates if g["key"] in inherits.get(manifests_[c], set())}
+        else:
+            out |= {c for c in crates if manifests_[c] == g["file"]}
+    return sorted(out)
 
 
 def branch_of_rev(repo, rev):
     """The repo's default branch when `rev` is on it, else None."""
+    try:
+        ensure(repo)
+    except Stop:
+        return None
     b = default_branch(repo)
     ok = run("git", "-C", str(WORKSPACE / repo), "merge-base", "--is-ancestor", rev, f"origin/{b}", check=False)[0] == 0
     return b if ok else None
+
+
+def locked_org_versions(repo, ref, owned):
+    """Highest locked version of each org crate in the repo's Cargo.lock at `ref`; {} when the branch has no lock."""
+    code, text = run("git", "-C", str(WORKSPACE / repo), "show", f"{ref}:Cargo.lock", check=False)
+    out = {}
+    for p in (tomllib.loads(text)["package"] if code == 0 else []):
+        if p["name"] in owned and vkey(p["version"]) > vkey(out.get(p["name"], "0.0.0")):
+            out[p["name"]] = p["version"]
+    return out
 
 
 def gaps(entries, target, owned):
@@ -689,8 +750,9 @@ class GhForge:
         d = json.loads(run("gh", "api", f"repos/{ORG}/{repo}/pulls/{number}")[1])
         return "merged" if d.get("merged") else d["state"]
 
-    def find_pr(self, repo, head):
-        rows = json.loads(run("gh", "pr", "list", "--repo", f"{ORG}/{repo}", "--head", head, "--state", "open", "--json", "url")[1] or "[]")
+    def find_pr(self, repo, head, base=None):
+        rows = json.loads(run("gh", "pr", "list", "--repo", f"{ORG}/{repo}", "--head", head, *(["--base", base] if base else []),
+                              "--state", "open", "--json", "url")[1] or "[]")
         return rows[0]["url"] if rows else None
 
     def dispatch(self, repo, workflow, ref, inputs):
@@ -754,8 +816,9 @@ class ApiForge:
         d = self._call("GET", f"/repos/{ORG}/{repo}/pulls/{number}")
         return "merged" if d.get("merged") else d["state"]
 
-    def find_pr(self, repo, head):
-        rows = self._call("GET", f"/repos/{ORG}/{repo}/pulls?head={ORG}:{urllib.parse.quote(head, safe='')}&state=open")
+    def find_pr(self, repo, head, base=None):
+        q = f"head={ORG}:{urllib.parse.quote(head, safe='')}&state=open" + (f"&base={urllib.parse.quote(base, safe='')}" if base else "")
+        rows = self._call("GET", f"/repos/{ORG}/{repo}/pulls?{q}")
         return rows[0]["html_url"] if rows else None
 
     def dispatch(self, repo, workflow, ref, inputs):
@@ -987,6 +1050,8 @@ def status(plan):
     ops = operations(plan)
     fixed = [dict(f, on_crates_io=is_published(f["crate"], f["version"])) for f in plan["fixed"]]
     warnings = [f"fixed input {f['crate']} {f['version']} is missing or yanked on crates.io" for f in fixed if not f["on_crates_io"]]
+    warnings += [f"{h['crate']} {h['head']} is an unpublished head with real changes that is not part of this run's plan; "
+                 f"run again to release it" for h in plan.get("later_heads", [])]
     warnings += [f"[patch] entry for {c} is a git pin the script does not edit; remove it by hand once {c} is released"
                  for c in plan.get("patched", [])]
     repos = {}
@@ -1019,7 +1084,7 @@ def status(plan):
                 repos_to_update=repos_to_update, crates_to_change=crates_to_change, operations=ops,
                 ready_operations=[o["id"] for o in ready],
                 layers=[[o["id"] for o in ops if o["layer"] == n] for n in sorted({o["layer"] for o in ops})],
-                pull_requests=[], bump_heads=plan.get("bump_heads", []),
+                pull_requests=[], bump_heads=plan.get("bump_heads", []), later_heads=plan.get("later_heads", []),
                 git_pinned_swaps=[dict(crate=p["crate"], ref=p["ref"], locked=p["locked"],
                                        note="the repo behind this pin is a step and is never released; the pin can become a "
                                             "version requirement once its crates are on crates.io")
@@ -1029,10 +1094,11 @@ def status(plan):
                 resume=resume if state != "complete" else None)
 
 
-def error_report(start, msg, state="error"):
+def error_report(start, msg, state="error", pull_requests=()):
     return dict(schema=SCHEMA, generated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                 start=dict(repo=start[0], branch=start[1]), state=state, summary=msg, repos_to_update=[],
-                crates_to_change=[], operations=[], ready_operations=[], layers=[], pull_requests=[], bump_heads=[], git_pinned_swaps=[], next=dict(kind="none"), conditions=[],
+                crates_to_change=[], operations=[], ready_operations=[], layers=[], pull_requests=list(pull_requests), bump_heads=[], later_heads=[],
+                git_pinned_swaps=[], next=dict(kind="none"), conditions=[],
                 fixed_inputs=[], git_pinned_out_of_scope=[], warnings=[], resume=resume_command(start))
 
 
@@ -1047,32 +1113,64 @@ def new_req(current, want):
     return (m.group(1) or "") + want if m else want
 
 
+def _is_header(line):
+    return bool(re.match(r"\s*\[+[^\]]+\]+\s*$", line))
+
+
+def _table_body(lines, i):
+    """(start, end) of the key lines under the table header at lines[i]."""
+    j = i + 1
+    while j < len(lines) and not _is_header(lines[j]):
+        j += 1
+    return i + 1, j
+
+
 def swap_git_text(text, e):
-    """Replace a git pin on one line with a version requirement, keeping features and the other keys."""
+    """Replace a git pin with a version requirement, keeping features and the other keys. Works on an inline table
+    (`k = { git = ... }`, on the pin's line) and on a table form (`[dependencies.k]`)."""
     lines = text.split("\n")
     i = e["line"] - 1
     found = lines[i] if 0 <= i < len(lines) else "(no such line)"
+    req = e["required"]
+    if _is_header(found):
+        lo, hi = _table_body(lines, i)
+        body = lines[lo:hi]
+        if not any(re.match(r"\s*git\s*=", b) for b in body):
+            die(f"{e['file']}:{e['line']}: expected a git pin for {e['key']} in this table, found: {found.strip()}")
+        body = [b for b in body if not re.match(r"\s*(git|branch|rev|tag)\s*=", b)]
+        if any(re.match(r"\s*version\s*=", b) for b in body):
+            body = [re.sub(r'(version\s*=\s*)"[^"]*"', lambda m: m.group(1) + f'"{req}"', b) if re.match(r"\s*version\s*=", b) else b for b in body]
+        else:
+            body = [f'version = "{req}"'] + body
+        lines[lo:hi] = body
+        return "\n".join(lines)
     if "git" not in found or e["key"] not in found or "{" not in found:
         die(f"{e['file']}:{e['line']}: expected an inline git pin for {e['key']}, found: {found.strip()}")
     out = re.sub(r'\bgit\s*=\s*"[^"]*"\s*,?\s*', "", found, count=1)
     out = re.sub(r'\b(?:branch|rev|tag)\s*=\s*"[^"]*"\s*,?\s*', "", out, count=1)
-    ver_kv = f'version = "{e["required"]}"'
-    out = re.sub(r"\{\s*\}", "{ " + ver_kv + " }", out, count=1) if re.search(r"\{\s*\}", out) else \
-        re.sub(r"\{\s*", "{ " + ver_kv + ", ", out, count=1)
+    out = re.sub(r",\s*\}", " }", out, count=1)  # a removed last key leaves a trailing comma
+    if re.search(r'\bversion\s*=\s*"', out):
+        out = re.sub(r'(\bversion\s*=\s*)"[^"]*"', lambda m: m.group(1) + f'"{req}"', out, count=1)
+    elif re.search(r"\{\s*\}", out):
+        out = re.sub(r"\{\s*\}", "{ " + f'version = "{req}"' + " }", out, count=1)
+    else:
+        out = re.sub(r"\{\s*", "{ " + f'version = "{req}", ', out, count=1)
     lines[i] = re.sub(r",\s*,", ",", out)
     return "\n".join(lines)
 
 
 def rev_text(text, e):
-    """Point a git pin's rev at a new commit, on the pin's line."""
+    """Point a git pin's rev at a new commit: on the pin's line, or inside its table when the pin is a table."""
     lines = text.split("\n")
     i = e["line"] - 1
     found = lines[i] if 0 <= i < len(lines) else "(no such line)"
+    lo, hi = _table_body(lines, i) if _is_header(found) else (i, i + 1)
     old = e["current"].partition(" ")[2]
-    if f'rev = "{old}"' not in found or e["key"] not in found:
-        die(f"{e['file']}:{e['line']}: expected {e['key']} with rev \"{old}\", found: {found.strip()}")
-    lines[i] = found.replace(f'rev = "{old}"', f'rev = "{e["required"]}"', 1)
-    return "\n".join(lines)
+    for k in range(lo, min(hi, len(lines))):
+        if f'rev = "{old}"' in lines[k] and (lo != i or e["key"] in lines[k]):
+            lines[k] = lines[k].replace(f'rev = "{old}"', f'rev = "{e["required"]}"', 1)
+            return "\n".join(lines)
+    return die(f"{e['file']}:{e['line']}: expected {e['key']} with rev \"{old}\", found: {found.strip()}")
 
 
 def edit_text(text, e):
@@ -1106,7 +1204,8 @@ def lock_commands(op):
     cmds = ["cargo metadata --format-version 1 >/dev/null"]  # rewrites the lock for the edited requirements and versions
     cmds += [f"cargo update -p {c}" for c in dict.fromkeys(e["crate"] for e in op.get("edits", []))]
     cmds += [f"cargo update -p {u['crate']}@{u['locked']} --precise {u['target']}" for u in op.get("lock_updates", [])]
-    cmds += [f"cargo update -p {c}" for c in dict.fromkeys(c for g in op.get("git_updates", []) for c in g["crates"])]
+    for g in op.get("git_updates", []):  # a crate that also has a registry copy needs its source in the spec
+        cmds += [f"cargo update -p {shlex.quote(g.get('specs', {}).get(c, c))}" for c in g["crates"]]
     return list(dict.fromkeys(cmds))
 
 
@@ -1184,13 +1283,19 @@ def wait_for_merge(prs, minutes, poll=60, state_of=None, clock=time.monotonic, s
         sleep(poll)
 
 
+def unexpected_changes(porcelain, allowed):
+    """Paths in `git status --porcelain` output that the script would not write itself (Cargo.lock and `allowed`)."""
+    paths = [line[3:].strip() for line in porcelain.splitlines() if line.strip()]
+    return sorted(p for p in paths if p not in set(allowed) | {"Cargo.lock"})
+
+
 def apply_op(op, start, shell=None):
     """Apply a repin or final repin in a new worktree branch, commit, push, open a PR. Never merges."""
     shell = shell or in_shell
     repo, base = op["repo"], op["branch"]
     git(repo, "fetch", "-q", "origin")
     branch = branch_name(op, git(repo, "rev-parse", f"origin/{base}").strip())
-    existing = FORGE.find_pr(repo, branch)
+    existing = FORGE.find_pr(repo, branch, base)
     if existing:
         return dict(operation=op["id"], repo=repo, base=base, branch=branch, url=existing, state="exists")
     wt = WORKSPACE / f"{repo}-worktrees" / branch.replace("/", "-")
@@ -1199,6 +1304,12 @@ def apply_op(op, start, shell=None):
         url = FORGE.create_pr(repo, branch, base, title, body)
         return dict(operation=op["id"], repo=repo, base=base, branch=branch, url=url, state="opened")
     if wt.exists() or git(repo, "branch", "--list", branch).strip():  # a failed attempt left this behind; nothing was pushed
+        if wt.exists():
+            own = {i["file"] for i in op.get("edits", []) + op.get("version_bumps", [])}
+            other = unexpected_changes(run("git", "-C", str(wt), "status", "--porcelain", check=False)[1], own)
+            if other:
+                die(f"{wt} is left over from an earlier attempt and holds changes the script did not make: {', '.join(other)}. "
+                    f"Move or commit them, or remove the worktree, then run again")
         git(repo, "worktree", "remove", "--force", str(wt), check=False)
         shutil.rmtree(wt, ignore_errors=True)
         git(repo, "worktree", "prune")
@@ -1439,10 +1550,9 @@ def main():
                 report = status(plan)
                 report["pull_requests"] = list(opened_all)
     except Stop as e:
-        report = error_report(start, str(e), e.state)
-        report["pull_requests"] = list(opened_all)
+        report = error_report(start, str(e), e.state, opened_all)
     except Exception as e:  # a network error or a missing binary still ends in the documented error report
-        report = error_report(start, f"unexpected {type(e).__name__}: {e}")
+        report = error_report(start, f"unexpected {type(e).__name__}: {e}", pull_requests=opened_all)
     print(render(report, a.output))
     sys.exit(2 if report["state"] == "error" else 0)
 

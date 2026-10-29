@@ -362,7 +362,7 @@ class GitFlow(unittest.TestCase):
         class Forge:
             prs = []
             def git_env(self): return {}
-            def find_pr(self, repo, head): return None
+            def find_pr(self, repo, head, base=None): return None
             def create_pr(self, repo, head, base, title, body, draft=False):
                 self.prs.append((repo, head, base, title, draft))
                 return "https://github.com/hoprnet/hopr-api/pull/1"
@@ -408,12 +408,22 @@ class GitFlow(unittest.TestCase):
         branch = rc.branch_name(op, self.base_sha())
         wt = self.tmp / "hopr-api-worktrees" / branch.replace("/", "-")
         self.sh("git", "worktree", "add", "-q", "-b", branch, str(wt), "origin/main")
-        (wt / "stray.txt").write_text("left over")
+        (wt / "Cargo.lock").write_text("# half-finished lock")      # what a failed attempt leaves behind
         result = rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
         self.assertEqual(result["state"], "opened")
         shown = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "show", f"{branch}:Cargo.toml").stdout
         self.assertIn('hopr-types = { version = "5.0.0"', shown)
-        self.assertFalse((wt / "stray.txt").exists())
+
+    def test_a_leftover_worktree_with_other_changes_is_never_deleted(self):
+        op = ApplyOps().op()
+        branch = rc.branch_name(op, self.base_sha())
+        wt = self.tmp / "hopr-api-worktrees" / branch.replace("/", "-")
+        self.sh("git", "worktree", "add", "-q", "-b", branch, str(wt), "origin/main")
+        (wt / "notes.txt").write_text("someone's work")
+        with self.assertRaises(rc.Stop) as e:
+            rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertIn("notes.txt", str(e.exception))
+        self.assertTrue((wt / "notes.txt").exists())
 
     def test_a_pushed_branch_with_no_pr_only_opens_the_pr(self):
         op = ApplyOps().op()
@@ -435,7 +445,7 @@ class GitFlow(unittest.TestCase):
         self.assertTrue(any("cargo update -p hopr-lib" in c for c in self.cmds[0]))   # the new content was applied
 
     def test_an_existing_open_pr_is_reported_and_nothing_is_pushed_again(self):
-        self.forge.find_pr = lambda repo, head: "https://github.com/hoprnet/hopr-api/pull/9"
+        self.forge.find_pr = lambda repo, head, base=None: "https://github.com/hoprnet/hopr-api/pull/9"
         result = rc.apply_op(ApplyOps().op(), ("edge-client", "release/4.1"), shell=self.stub_shell)
         self.assertEqual((result["state"], result["url"]), ("exists", "https://github.com/hoprnet/hopr-api/pull/9"))
         self.assertEqual(self.forge.prs, [])
@@ -569,17 +579,24 @@ class BumpOnlyGit(unittest.TestCase):
         self.sh("git", "init", "-q", "-b", "main")
         self.saved = rc.WORKSPACE
         rc.WORKSPACE = self.tmp
-        self.commit("src/lib.rs", "a", "feat: something")
+        self.write("src/lib.rs", "a")
+        self.write("Cargo.toml", self.manifest("1.0.0"))
+        self.commit("feat: something")
 
     def tearDown(self):
         import shutil
         rc.WORKSPACE = self.saved
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def commit(self, path, text, subject):
+    def manifest(self, version, deps=""):
+        return f'[package]\nname = "x"\nversion = "{version}"\n\n[dependencies]\n{deps}'
+
+    def write(self, path, text):
         f = self.tmp / "r" / path
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(text + str(len(self.sh("git", "log", "--oneline").stdout) if (self.tmp / "r/.git/refs/heads/main").exists() else 0))
+        f.write_text(text)
+
+    def commit(self, subject):
         self.sh("git", "add", "-A")
         self.sh("git", "commit", "-q", "-m", subject)
 
@@ -587,23 +604,258 @@ class BumpOnlyGit(unittest.TestCase):
         self.sh("git", "update-ref", "refs/remotes/origin/main", "HEAD")
         return "origin/main"
 
+    def bump(self, version="1.0.1"):
+        self.write("Cargo.toml", self.manifest(version))
+        self.commit(f"ci: Bump to version {version}")
+
     def test_head_set_by_a_ci_bump_with_nothing_after_it_is_bump_only(self):
-        self.commit("Cargo.toml", "v", "ci: Bump to version 1.0.1")
+        self.bump()
         self.assertTrue(rc.bump_only("r", self.ref(), "1.0.1"))
 
     def test_a_lock_only_commit_after_the_bump_is_still_bump_only(self):
-        self.commit("Cargo.toml", "v", "ci: Bump to version 1.0.1")
-        self.commit("Cargo.lock", "l", "fix(ci): sync Cargo.lock")
+        self.bump()
+        self.write("Cargo.lock", "l")
+        self.commit("fix(ci): sync Cargo.lock")
         self.assertTrue(rc.bump_only("r", self.ref(), "1.0.1"))
 
     def test_a_source_change_after_the_bump_is_real_work(self):
-        self.commit("Cargo.toml", "v", "ci: Bump to version 1.0.1")
-        self.commit("src/lib.rs", "new", "fix: something real")
+        self.bump()
+        self.write("src/lib.rs", "new")
+        self.commit("fix: something real")
         self.assertFalse(rc.bump_only("r", self.ref(), "1.0.1"))
 
     def test_a_version_not_set_by_a_ci_bump_is_not_bump_only(self):
-        self.commit("Cargo.toml", "v", "feat: add a thing and bump to 1.1.0")
+        self.write("Cargo.toml", self.manifest("1.1.0"))
+        self.commit("feat: add a thing and bump to 1.1.0")
         self.assertFalse(rc.bump_only("r", self.ref(), "1.1.0"))
+
+    def test_a_bump_commit_that_also_changes_source_is_not_a_bump(self):
+        self.write("src/lib.rs", "sneaked in")
+        self.bump()
+        self.assertFalse(rc.bump_only("r", self.ref(), "1.0.1"))
+
+    def test_a_manifest_edit_that_is_not_a_version_after_the_bump_is_real_work(self):
+        self.bump()
+        self.write("Cargo.toml", self.manifest("1.0.1", deps='serde = "1"\n'))
+        self.commit("feat: add a dependency")
+        self.assertFalse(rc.bump_only("r", self.ref(), "1.0.1"))
+
+    def test_a_manifest_edit_that_is_only_a_version_after_the_bump_is_still_a_bump(self):
+        self.bump()
+        self.write("Cargo.toml", self.manifest("1.0.1").replace('version = "1.0.1"', 'version = "1.0.1"  # synced'))
+        self.commit("chore: tidy")
+        self.assertTrue(rc.bump_only("r", self.ref(), "1.0.1"))
+
+
+class VersionChanges(unittest.TestCase):
+    def test_only_version_lines_count(self):
+        ok = '--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -3 +3 @@\n-version = "1.0.0"\n+version = "1.0.1"\n'
+        self.assertTrue(rc.only_version_changes(ok))
+        self.assertFalse(rc.only_version_changes(ok + '+serde = "1"\n'))
+        self.assertFalse(rc.only_version_changes('-hopr-api = { version = "1.0.0" }\n+hopr-api = { version = "1.0.1" }\n'))
+        self.assertTrue(rc.only_version_changes(""))
+
+
+class ClassifyHeads(unittest.TestCase):
+    def s(self, todo):
+        return dict(repo="r", branch="main", todo=dict(todo), head=dict(todo))
+
+    def published(self, c):
+        return {"a": ["1.0.0", "1.0.1"], "b": ["2.0.0"]}.get(c, [])
+
+    def test_a_bump_head_with_a_published_stand_in_is_not_released(self):
+        got = rc.classify_heads(self.s({"a": "1.0.2"}), None, lambda c, v: True, self.published)
+        self.assertEqual(got["todo"], {})
+        self.assertEqual(got["bump_heads"], [dict(crate="a", head="1.0.2", published="1.0.1")])
+        self.assertEqual(got["stand_in"], {"a": "1.0.1"})
+
+    def test_a_bump_head_with_no_published_stand_in_stays_a_release(self):
+        got = rc.classify_heads(self.s({"new": "0.1.1"}), None, lambda c, v: True, self.published)
+        self.assertEqual(got["todo"], {"new": "0.1.1"})
+        self.assertEqual(got["bump_heads"], [])
+
+    def test_a_real_head_outside_the_first_plan_is_reported_as_a_later_release(self):
+        got = rc.classify_heads(self.s({"a": "1.0.2"}), {("b", "2.0.0")}, lambda c, v: False, self.published)
+        self.assertEqual(got["todo"], {})
+        self.assertEqual(got["bump_heads"], [])
+        self.assertEqual(got["later_heads"], [dict(crate="a", head="1.0.2", published="1.0.1")])
+
+    def test_a_real_head_inside_the_first_plan_or_with_no_plan_is_released(self):
+        self.assertEqual(rc.classify_heads(self.s({"a": "1.0.2"}), {("a", "1.0.2")}, lambda c, v: False, self.published)["todo"], {"a": "1.0.2"})
+        self.assertEqual(rc.classify_heads(self.s({"a": "1.0.2"}), None, lambda c, v: False, self.published)["todo"], {"a": "1.0.2"})
+
+    def test_later_heads_show_in_the_report_as_warnings(self):
+        r = rc.status(dict(plan([]), later_heads=[dict(crate="a", head="1.0.2", published="1.0.1")]))
+        self.assertEqual(r["later_heads"], [dict(crate="a", head="1.0.2", published="1.0.1")])
+        self.assertTrue(any("a 1.0.2" in w and "run again" in w for w in r["warnings"]))
+
+
+class ZeroZeroVersions(unittest.TestCase):
+    def test_a_0_0_x_head_matches_only_its_own_patch(self):
+        self.assertEqual(rc.pick_latest_compatible(["0.0.3", "0.0.4"], "0.0.3"), "0.0.3")
+        self.assertIsNone(rc.pick_latest_compatible(["0.0.4"], "0.0.3"))
+
+
+def tomllib_loads(text):
+    import tomllib
+    return tomllib.loads(text)
+
+
+class TableFormPins(unittest.TestCase):
+    swap = dict(file="Cargo.toml", key="hopr-lib", crate="hopr-lib", current="git x", required="5.0.0", swap="git_to_version")
+
+    def text(self):
+        return ('[package]\nname = "x"\n\n[dependencies.hopr-lib]\ngit = "https://github.com/hoprnet/hoprnet"\n'
+                'branch = "master"\nfeatures = ["serde"]\n\n[dev-dependencies]\nfoo = "1"\n')
+
+    def test_swap_in_a_table_keeps_the_other_keys_and_the_next_table(self):
+        out = rc.swap_git_text(self.text(), dict(self.swap, line=4))
+        self.assertIn('[dependencies.hopr-lib]\nversion = "5.0.0"\nfeatures = ["serde"]\n\n[dev-dependencies]\nfoo = "1"', out)
+        self.assertEqual(tomllib_loads(out)["dependencies"]["hopr-lib"], {"version": "5.0.0", "features": ["serde"]})
+
+    def test_rev_in_a_table(self):
+        text = '[dependencies.hopr-lib]\ngit = "https://github.com/hoprnet/hoprnet"\nrev = "af80993c"\n'
+        out = rc.rev_text(text, dict(self.swap, line=1, current="rev af80993c", required="88b93587", swap="git_rev"))
+        self.assertEqual(tomllib_loads(out)["dependencies"]["hopr-lib"]["rev"], "88b93587")
+
+    def test_swap_replaces_an_existing_version_key_and_leaves_valid_toml(self):
+        text = 'hopr-lib = { git = "https://github.com/hoprnet/hoprnet", version = "4.0", branch = "master" }\n'
+        out = rc.swap_git_text(text, dict(self.swap, line=1))
+        self.assertEqual(tomllib_loads(out)["hopr-lib"], {"version": "5.0.0"})
+
+    def test_edited_manifests_stay_valid_toml(self):
+        for text, e in [('a = { git = "https://github.com/hoprnet/hoprnet", branch = "x", features = ["f"] }\n', dict(self.swap, key="a", line=1)),
+                        ('a = { git = "https://github.com/hoprnet/hoprnet", rev = "abc", default-features = false }\n',
+                         dict(self.swap, key="a", line=1, current="rev abc", required="def", swap="git_rev"))]:
+            tomllib_loads(rc.edit_text(text, e))
+
+
+class CargoAccepts(unittest.TestCase):
+    """The edited manifest still works with cargo (skipped where cargo is missing)."""
+
+    def test_a_version_bump_gives_a_manifest_cargo_resolves_and_a_lock_with_the_new_version(self):
+        import shutil, subprocess, tempfile
+        if not shutil.which("cargo"):
+            self.skipTest("cargo not installed")
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            (tmp / "src").mkdir()
+            (tmp / "src" / "lib.rs").write_text("")
+            (tmp / "Cargo.toml").write_text('[package]\nname = "x"\nversion = "1.0.0"\nedition = "2021"\n')
+            bumped = rc.bump_text((tmp / "Cargo.toml").read_text(), dict(crate="x", file="Cargo.toml", current="1.0.0", suggested="1.0.1"))
+            (tmp / "Cargo.toml").write_text(bumped)
+            r = subprocess.run(["cargo", "metadata", "--format-version", "1", "--offline"], cwd=tmp, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('version = "1.0.1"', (tmp / "Cargo.lock").read_text())
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class FindPrByBase(unittest.TestCase):
+    def test_api_find_pr_filters_by_base(self):
+        http = FakeHttp({("GET", "/pulls"): (200, [{"html_url": "https://github.com/hoprnet/r/pull/3"}])})
+        self.assertEqual(rc.ApiForge("t", http).find_pr("r", "head", "release/4.1"), "https://github.com/hoprnet/r/pull/3")
+        self.assertIn("base=release%2F4.1", http.calls[0][1])
+
+    def test_gh_find_pr_passes_the_base(self):
+        calls = []
+        saved = rc.run
+        rc.run = lambda *a, **kw: calls.append(a) or (0, "[]")
+        try:
+            rc.GhForge().find_pr("r", "head", "release/4.1")
+        finally:
+            rc.run = saved
+        self.assertIn("--base", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--base") + 1], "release/4.1")
+
+
+class ErrorReportKeepsPullRequests(unittest.TestCase):
+    def test_pull_requests_opened_before_the_error_stay_in_the_report(self):
+        prs = [dict(url="https://github.com/hoprnet/x/pull/1")]
+        self.assertEqual(rc.error_report(("a", "b"), "boom", pull_requests=prs)["pull_requests"], prs)
+        self.assertEqual(rc.error_report(("a", "b"), "boom")["pull_requests"], [])
+
+
+class RevPinRepoIsCloned(unittest.TestCase):
+    def test_the_repo_is_cloned_before_its_default_branch_is_read(self):
+        order, saved = [], (rc.ensure, rc.default_branch, rc.run)
+        rc.ensure = lambda repo: order.append("ensure")
+        rc.default_branch = lambda repo: order.append("default_branch") or "master"
+        rc.run = lambda *a, **kw: (0, "")
+        try:
+            self.assertEqual(rc.branch_of_rev("hoprnet", "af80993c"), "master")
+            rc.ensure = lambda repo: (_ for _ in ()).throw(rc.Stop("no access"))
+            self.assertIsNone(rc.branch_of_rev("hoprnet", "af80993c"))
+        finally:
+            rc.ensure, rc.default_branch, rc.run = saved
+        self.assertEqual(order, ["ensure", "default_branch"])
+
+
+class LockOfAGitPinnedRepo(unittest.TestCase):
+    def test_a_repo_without_a_committed_lock_gives_no_versions(self):
+        import os, subprocess, tempfile, shutil
+        tmp = Path(tempfile.mkdtemp())
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        sh = lambda *a: subprocess.run(a, cwd=tmp / "r", env=env, check=True, capture_output=True, text=True)
+        (tmp / "r").mkdir()
+        sh("git", "init", "-q", "-b", "main")
+        (tmp / "r" / "README").write_text("x")
+        sh("git", "add", "-A"); sh("git", "commit", "-q", "-m", "init"); sh("git", "update-ref", "refs/remotes/origin/main", "HEAD")
+        saved = rc.WORKSPACE
+        rc.WORKSPACE = tmp
+        try:
+            self.assertEqual(rc.locked_org_versions("r", "origin/main", {"hopr-types"}), {})
+            (tmp / "r" / "Cargo.lock").write_text('[[package]]\nname = "hopr-types"\nversion = "2.3.2"\n[[package]]\nname = "serde"\nversion = "1.0.0"\n')
+            sh("git", "add", "-A"); sh("git", "commit", "-q", "-m", "lock"); sh("git", "update-ref", "refs/remotes/origin/main", "HEAD")
+            self.assertEqual(rc.locked_org_versions("r", "origin/main", {"hopr-types"}), {"hopr-types": "2.3.2"})
+        finally:
+            rc.WORKSPACE = saved
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class InheritedRequirements(unittest.TestCase):
+    manifests = {"a": "a/Cargo.toml", "b": "b/Cargo.toml"}
+
+    def gap(self, file, table, key="hopr-types"):
+        return dict(file=file, table=table, key=key, crate=key, req="4.1.0", want="5.0.0")
+
+    def test_a_gap_in_a_members_own_manifest_selects_that_member(self):
+        got = rc.crates_with_gaps(["a", "b"], self.manifests, [self.gap("b/Cargo.toml", "dependencies")], {})
+        self.assertEqual(got, ["b"])
+
+    def test_a_stale_workspace_requirement_selects_only_the_members_that_inherit_it(self):
+        gaps_ = [self.gap("Cargo.toml", "workspace.dependencies")]
+        got = rc.crates_with_gaps(["a", "b"], self.manifests, gaps_, {"a/Cargo.toml": {"hopr-types"}, "b/Cargo.toml": {"serde"}})
+        self.assertEqual(got, ["a"])
+
+    def test_a_root_package_and_an_inheriting_member_are_both_selected(self):
+        manifests = {"root": "Cargo.toml", "m": "m/Cargo.toml"}
+        gaps_ = [self.gap("Cargo.toml", "workspace.dependencies")]
+        got = rc.crates_with_gaps(["root", "m"], manifests, gaps_, {"Cargo.toml": {"hopr-types"}, "m/Cargo.toml": {"hopr-types"}})
+        self.assertEqual(got, ["m", "root"])
+
+    def test_inherited_keys_are_read_from_the_manifests(self):
+        ms = {"a/Cargo.toml": {"package": {"name": "a"}, "dependencies": {"hopr-types": {"workspace": True}, "x": "1"},
+                               "dev-dependencies": {"y": {"workspace": True, "features": ["f"]}}},
+              "b/Cargo.toml": {"package": {"name": "b"}}}
+        self.assertEqual(rc.inherited_keys(ms), {"a/Cargo.toml": {"hopr-types", "y"}, "b/Cargo.toml": set()})
+
+
+class GitSourceSpec(unittest.TestCase):
+    def test_a_git_pinned_crate_is_named_by_its_source_in_cargo_update(self):
+        op = dict(kind="final_repin", repo="hoprd", branch="release/4.1", edits=[], lock_updates=[], version_bumps=[],
+                  git_updates=[dict(repo="hoprnet", branch="release/4.0", crates=["hopr-lib"], locked="9e7372b04", head="77ac01dad",
+                                    specs={"hopr-lib": "https://github.com/hoprnet/hoprnet#hopr-lib@4.0.5"})])
+        self.assertIn("cargo update -p 'https://github.com/hoprnet/hoprnet#hopr-lib@4.0.5'", rc.lock_commands(op))
+        self.assertNotIn("cargo update -p hopr-lib", rc.lock_commands(op))
+
+
+class DirtyWorktree(unittest.TestCase):
+    def test_edits_in_the_files_the_script_writes_are_expected(self):
+        self.assertEqual(rc.unexpected_changes(" M Cargo.lock\n M Cargo.toml\n", {"Cargo.toml"}), [])
+
+    def test_any_other_change_is_reported(self):
+        self.assertEqual(rc.unexpected_changes(" M Cargo.lock\n?? notes.txt\n M src/lib.rs\n", {"Cargo.toml"}), ["notes.txt", "src/lib.rs"])
 
 
 class BumpHeads(unittest.TestCase):
@@ -766,10 +1018,9 @@ class MixedRepos(unittest.TestCase):
 
     def test_which_published_crates_a_gap_touches(self):
         files = {"a": "a/Cargo.toml", "b": "b/Cargo.toml"}
-        self.assertEqual(rc.crates_with_gaps(["a", "b"], files, [dict(file="b/Cargo.toml")]), ["b"])
-        self.assertEqual(rc.crates_with_gaps(["a", "b"], files, [dict(file="Cargo.toml")]), ["a", "b"])  # workspace-level
-        self.assertEqual(rc.crates_with_gaps(["a"], {"a": "Cargo.toml"}, [dict(file="Cargo.toml")]), ["a"])
-        self.assertEqual(rc.crates_with_gaps(["a", "b"], files, []), [])
+        self.assertEqual(rc.crates_with_gaps(["a", "b"], files, [dict(file="b/Cargo.toml")], {}), ["b"])
+        self.assertEqual(rc.crates_with_gaps(["a"], {"a": "Cargo.toml"}, [dict(file="Cargo.toml")], {}), ["a"])
+        self.assertEqual(rc.crates_with_gaps(["a", "b"], files, [], {}), [])
 
 
 class RunSettings(unittest.TestCase):

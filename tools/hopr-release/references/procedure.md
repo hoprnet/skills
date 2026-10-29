@@ -86,8 +86,9 @@ rendering.
    its release. A repo whose head is already published is bumped in that PR and released
    again.
 5. **Release.** A crate is released unless its head version is already on crates.io, or the
-   head is only CI's post-release bump: set by a `ci: Bump to version X` commit with
-   nothing but `Cargo.toml` and `Cargo.lock` changed since. Such a head has no new code. It
+   head is only CI's post-release bump: set by a `ci: Bump to version X` commit, with
+   nothing but the `version` lines of a `Cargo.toml` and `Cargo.lock` changed by that commit or
+   after it. A bump head with no published version to stand in for it stays a release. Such a head has no new code. It
    is listed in `bump_heads`, not released, and the newest published version stands in for
    it, so lock updates target versions that exist. A head set by a real change, or followed
    by one, is a release. A release waits only for what it needs: a repin, or an
@@ -130,7 +131,8 @@ rendering.
    keeps the script running after it opens PRs: it waits for them to merge (it never merges),
    re-plans at once, and opens the PRs that were waiting. A PR closed without a merge, or the time
    limit, ends the run with state `paused`. A pin whose crate has a published version becomes a
-   version requirement (one edit per line), and its git revision is no longer moved.
+   version requirement (one edit per line), and its git revision is no longer moved. Inline pins
+   (`k = { git = ... }`) and table pins (`[dependencies.k]`) are both edited.
 10. **Open the PRs.** `--execute-no-release` opens a PR for each ready repin or final
    operation, without releasing: it creates a branch in a git worktree
    (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
@@ -158,6 +160,7 @@ or run the releases itself.
 | `layers` | Operation ids per layer. A layer is 1 + the highest layer among an operation's `depends_on`. Operations in one layer are independent; each also carries `layer` and `concurrency_group` (`layer-N`). |
 | `conditions` | What must hold before the cascade continues, each with a `verify` command. |
 | `resume` | The command to run once the conditions hold. `null` when complete. |
+| `later_heads` | Real unpublished heads outside this run's first plan. Not released now; run again. Each also gives a warning. |
 | `bump_heads` | Heads that are only CI's version bump after a release: crate, head, newest published. Not released. |
 | `git_pinned_swaps` | Git pins whose repo is a step (hoprnet): kept as notes. They can become version requirements once its crates are on crates.io. |
 | `pull_requests` | Draft PRs opened or found by `--execute` and `--execute-no-release`: operation, repo, base, branch, url, state (`opened` or `exists`). |
