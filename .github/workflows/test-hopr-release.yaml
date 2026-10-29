@@ -1,0 +1,25 @@
+name: Test hopr-release
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  merge_group:
+concurrency:
+  group: test-hopr-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions: {}
+jobs:
+  unit:
+    name: Unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the release-cascade tests
+        run: python3 -I tools/hopr-release/scripts/test_release_cascade.py
