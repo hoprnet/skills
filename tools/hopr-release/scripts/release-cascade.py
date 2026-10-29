@@ -43,7 +43,9 @@ revision (`cargo update -p hopr-lib`; a `rev` pin is edited to the branch head).
 Git-ref pins. A dependency of the start repo pinned to a git ref of an org repo (git = ...,
 branch/rev/tag = ...) is planned for a swap to a released version. When crates.io has a
 version at or above the locked one, the swap joins the final operation. Otherwise a
-`pin_swap` operation is `blocked` and says why. [patch] git entries are only warned about.
+`pin_swap` operation is `blocked` and says why, unless the repo behind the pin is a step
+(hoprnet), which is never released: then the pin is a note in `git_pinned_swaps`. [patch] git
+entries are only warned about.
 
 --execute-no-release. For each ready repin or final operation: create a branch in a git
 worktree (<workspace>/<repo>-worktrees/), edit Cargo.toml (requirements, version bumps, git
@@ -66,6 +68,7 @@ turn the list into a workflow, or run the releases. Fields:
                    repin: edits (file, line, key, current, required), version_bumps, then
                    final_repin: edits (also git-pin swaps), lock_updates (crate, locked, target), then
                    pin_swap: blocked_reason (a git pin with no published version yet)
+  git_pinned_swaps git pins kept because their repo is a step that is never released
   bump_heads       heads that are only CI's version bump: crate, head, newest published
   pull_requests    draft PRs opened or found by --execute / --execute-no-release
                    (operation, repo, base, branch, url, state opened | exists)
@@ -534,6 +537,8 @@ def build_plan(start_repo, start_branch, planned=None):
         target.update(s["release_versions"])  # leaf first, so downstream repos see the version that will exist
     start_ms = manifests(start_repo, f"origin/{start_branch}")
     start_entries = dep_entries(start_ms)
+    pin_groups = group_git_pins(git_pins(start_ms), git_sources, rev_branch=branch_of_rev)
+    step_crates = {c for g in pin_groups for c in g["crates"]}
     pins = []
     for pin in git_pins(start_ms):
         locked = pinned.get(pin["crate"])
@@ -541,9 +546,9 @@ def build_plan(start_repo, start_branch, planned=None):
         if swap_to and vkey(swap_to) < vkey(locked):
             swap_to = None
         pins.append(dict(pin, line=line_of(start_repo, f"origin/{start_branch}", pin["file"], pin["key"], pin.get("table")),
-                         locked=locked, target=swap_to))
+                         locked=locked, target=swap_to, step=pin["crate"] in step_crates))
     upstream, git_updates = [], []
-    for g in group_git_pins(git_pins(start_ms), git_sources, rev_branch=branch_of_rev):
+    for g in pin_groups:
         try:
             ensure(g["repo"])
         except Stop:
@@ -865,7 +870,7 @@ def operations(plan):
                         + (f" and to the current {', '.join(sorted({g['repo'] + '@' + g['branch'] for g in git_updates}))}" if git_updates else ""),
             then="open a PR with the requirement edits and a refreshed Cargo.lock, then merge it")
     for p in pins:
-        if not p["target"]:
+        if not p["target"] and not p.get("step"):  # a pin to a repo that is a step is only a note (git_pinned_swaps)
             sr, sb = plan["start"]
             new("pin_swap", repo=sr, branch=sb, edits=[], crates=[p["crate"]], depends_on=[],
                 description=f"swap the git pin of {p['crate']} ({p['ref']}) for a released version",
@@ -935,6 +940,10 @@ def status(plan):
                 ready_operations=[o["id"] for o in ready],
                 layers=[[o["id"] for o in ops if o["layer"] == n] for n in sorted({o["layer"] for o in ops})],
                 pull_requests=[], bump_heads=plan.get("bump_heads", []),
+                git_pinned_swaps=[dict(crate=p["crate"], ref=p["ref"], locked=p["locked"],
+                                       note="the repo behind this pin is a step and is never released; the pin can become a "
+                                            "version requirement once its crates are on crates.io")
+                                  for p in plan.get("pins", []) if p.get("step") and not p["target"]],
                 next=nxt, conditions=conditions,
                 fixed_inputs=fixed, git_pinned_out_of_scope=plan["pinned"], warnings=warnings,
                 resume=resume if state != "complete" else None)
@@ -943,7 +952,7 @@ def status(plan):
 def error_report(start, msg, state="error"):
     return dict(schema=SCHEMA, generated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                 start=dict(repo=start[0], branch=start[1]), state=state, summary=msg, repos_to_update=[],
-                crates_to_change=[], operations=[], ready_operations=[], layers=[], pull_requests=[], bump_heads=[], next=dict(kind="none"), conditions=[],
+                crates_to_change=[], operations=[], ready_operations=[], layers=[], pull_requests=[], bump_heads=[], git_pinned_swaps=[], next=dict(kind="none"), conditions=[],
                 fixed_inputs=[], git_pinned_out_of_scope=[], warnings=[], resume=resume_command(start))
 
 
@@ -1118,6 +1127,7 @@ def render_plain(r):
         out += [f"condition {c['id']}: {c['description']}", f"  verify: {c['verify']}"]
     for f in r["fixed_inputs"]:
         out.append(f"fixed input: {f['crate']} {f['version']} ({f.get('reason', '')}, on crates.io: {f['on_crates_io']})")
+    out += [f"git pin kept: {n['crate']} ({n['ref']}, locked {n['locked']}): {n['note']}" for n in r.get("git_pinned_swaps", [])]
     out += [f"bump head, not released: {b['crate']} {b['head']} (CI bump after {b['published']})" for b in r.get("bump_heads", [])]
     if r["git_pinned_out_of_scope"]:
         out.append("git-pinned: " + ", ".join(r["git_pinned_out_of_scope"]))

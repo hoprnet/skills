@@ -111,9 +111,10 @@ rendering.
    the `rev` for a `rev` pin. The final operation also
    updates lock entries that pin older versions than the released ones, and swaps git-ref
    pins of org crates (`git = ..., branch/rev/tag = ...`) for a released version. A pin whose
-   crate has no published version yet is a `blocked` `pin_swap` operation with the reason;
-   today that is the case for `hopr-lib` and the other hoprnet crates, which are not on
-   crates.io. `[patch]` git entries are only warned about.
+   crate has no published version yet is a `blocked` `pin_swap` operation with the reason,
+   unless its repo is a step of the cascade (hoprnet): then it is only a note in
+   `git_pinned_swaps`, because that repo is never released and the final operation already
+   moves the git revision. `[patch]` git entries are only warned about.
 8. **Open the PRs.** `--execute-no-release` opens a draft PR for each ready repin or final
    operation, without releasing: it creates a branch in a git worktree
    (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
@@ -142,6 +143,7 @@ or run the releases itself.
 | `conditions` | What must hold before the cascade continues, each with a `verify` command. |
 | `resume` | The command to run once the conditions hold. `null` when complete. |
 | `bump_heads` | Heads that are only CI's version bump after a release: crate, head, newest published. Not released. |
+| `git_pinned_swaps` | Git pins whose repo is a step (hoprnet): kept as notes. They can become version requirements once its crates are on crates.io. |
 | `pull_requests` | Draft PRs opened or found by `--execute` and `--execute-no-release`: operation, repo, base, branch, url, state (`opened` or `exists`). |
 | `fixed_inputs`, `git_pinned_out_of_scope`, `warnings` | Inputs only checked on crates.io, org crates pinned by git (repin, not released), and problems such as a yanked fixed input. |
 

@@ -904,6 +904,32 @@ class UpstreamOps(unittest.TestCase):
         self.assertIn("git hopr-lib 9e7372b04 -> 88b935877", rc.op_detail(ops[0]))
 
 
+class GitPinnedSwaps(unittest.TestCase):
+    def pin(self, target=None, step=True):
+        return dict(file="Cargo.toml", line=97, key="hopr-lib", crate="hopr-lib", git="https://github.com/hoprnet/hoprnet",
+                    ref="branch release/4.0", locked="4.0.5", target=target, step=step)
+
+    def test_a_pin_to_a_repo_that_is_a_step_is_a_note_not_an_operation(self):
+        self.assertEqual(rc.operations(plan([], pins=[self.pin()])), [])
+        r = rc.status(plan([], pins=[self.pin()]))
+        self.assertEqual(r["state"], "complete")
+        self.assertEqual(r["git_pinned_swaps"], [dict(crate="hopr-lib", ref="branch release/4.0", locked="4.0.5",
+                                                      note=r["git_pinned_swaps"][0]["note"])])
+        self.assertIn("crates.io", r["git_pinned_swaps"][0]["note"])
+
+    def test_a_pin_to_a_repo_that_is_not_a_step_stays_a_blocked_operation(self):
+        ops = rc.operations(plan([], pins=[self.pin(step=False)]))
+        self.assertEqual([(o["kind"], o["status"]) for o in ops], [("pin_swap", "blocked")])
+        self.assertEqual(rc.status(plan([], pins=[self.pin(step=False)]))["git_pinned_swaps"], [])
+
+    def test_a_pin_with_a_published_version_is_still_swapped(self):
+        ops = rc.operations(plan([], pins=[self.pin(target="5.0.0")]))
+        self.assertEqual([o["kind"] for o in ops], ["final_repin"])
+
+    def test_the_notes_show_in_the_plain_report(self):
+        self.assertIn("git pin kept: hopr-lib", rc.render(rc.status(plan([], pins=[self.pin()])), "plain"))
+
+
 class Layers(unittest.TestCase):
     def test_independent_operations_share_a_layer_and_dependents_come_after(self):
         a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
