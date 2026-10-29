@@ -115,7 +115,13 @@ rendering.
    unless its repo is a step of the cascade (hoprnet): then it is only a note in
    `git_pinned_swaps`, because that repo is never released and the final operation already
    moves the git revision. `[patch]` git entries are only warned about.
-8. **Open the PRs.** `--execute-no-release` opens a PR for each ready repin or final
+8. **Order rule.** The start repo's PR is never opened while the PR of the repo it waits for
+   (hoprnet) is open: that operation is `pending` until the PR is merged. `--wait-merge MINUTES`
+   keeps the script running after it opens PRs: it waits for them to merge (it never merges),
+   re-plans at once, and opens the PRs that were waiting. A PR closed without a merge, or the time
+   limit, ends the run with state `paused`. A pin whose crate has a published version becomes a
+   version requirement (one edit per line), and its git revision is no longer moved.
+9. **Open the PRs.** `--execute-no-release` opens a PR for each ready repin or final
    operation, without releasing: it creates a branch in a git worktree
    (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
    (inside `nix develop` when the repo has a flake, so the hooks run), commits, pushes and

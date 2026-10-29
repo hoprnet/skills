@@ -54,6 +54,11 @@ run), commit, push, and open a PR. It asks `yes` once (--yes skips it). It never
 merges and never releases. A branch name is derived from the edits, so a re-run finds the
 open PR and does not push a second one. --execute does the releases first, then the same.
 
+Order rule. The start repo's PR is never opened while the PR of the repo it waits for (hoprnet)
+is open: its operation stays `pending` until that PR is merged. --wait-merge MINUTES makes the
+script wait for the PRs it opened (it never merges them), then re-plan at once and open the PRs
+that were waiting. A PR closed without a merge, or the time limit, stops the run (state paused).
+
 Output. -o json (default) prints one indented JSON document, -o mjson the same minified on
 one line, -o plain a text rendering. Schema "hopr-release-cascade/v2"; progress goes to stderr. The dry run lists every operation to do, so a bot can propagate the repins,
 turn the list into a workflow, or run the releases. Fields:
@@ -624,6 +629,10 @@ class GhForge:
     def clone(self, repo, dest):
         run("gh", "repo", "clone", f"{ORG}/{repo}", str(dest), "--", "--filter=blob:none", "--no-checkout", "--quiet")
 
+    def pr_state(self, repo, number):
+        d = json.loads(run("gh", "api", f"repos/{ORG}/{repo}/pulls/{number}")[1])
+        return "merged" if d.get("merged") else d["state"]
+
     def find_pr(self, repo, head):
         rows = json.loads(run("gh", "pr", "list", "--repo", f"{ORG}/{repo}", "--head", head, "--state", "open", "--json", "url")[1] or "[]")
         return rows[0]["url"] if rows else None
@@ -685,6 +694,10 @@ class ApiForge:
     def clone(self, repo, dest):
         run("git", "clone", "--filter=blob:none", "--no-checkout", "--quiet", f"https://github.com/{ORG}/{repo}", str(dest))
 
+    def pr_state(self, repo, number):
+        d = self._call("GET", f"/repos/{ORG}/{repo}/pulls/{number}")
+        return "merged" if d.get("merged") else d["state"]
+
     def find_pr(self, repo, head):
         rows = self._call("GET", f"/repos/{ORG}/{repo}/pulls?head={ORG}:{urllib.parse.quote(head, safe='')}&state=open")
         return rows[0]["html_url"] if rows else None
@@ -745,6 +758,9 @@ class AnonForge:
     def find_pr(self, *a, **kw):
         self._need("opening a pull request")
 
+    def pr_state(self, *a, **kw):
+        self._need("waiting for a merge")
+
     def create_pr(self, *a, **kw):
         self._need("opening a pull request")
 
@@ -792,6 +808,8 @@ def resume_flags(a):
         parts += ["--release-type", a.release_type]
     if a.max_releases is not None:
         parts += ["--max-releases", str(a.max_releases)]
+    if getattr(a, "wait_merge", 0):
+        parts += ["--wait-merge", str(a.wait_merge)]
     return shlex.join(parts)
 
 
@@ -858,7 +876,12 @@ def operations(plan):
     pins = plan.get("pins", [])
     swaps = [dict(file=p["file"], line=p["line"], key=p["key"], crate=p["crate"], current=f"git {p['git']} {p['ref']}",
                   required=p["target"], swap="git_to_version") for p in pins if p["target"]]
-    git_updates = plan.get("git_updates", [])
+    # a crate swapped to a published version no longer has a git revision to move
+    swapped = {p["crate"] for p in pins if p["target"]}
+    git_updates = [dict(g, crates=[c for c in g["crates"] if c not in swapped],
+                        **({"edits": [e for e in g["edits"] if e["crate"] not in swapped]} if "edits" in g else {}))
+                   for g in plan.get("git_updates", [])]
+    git_updates = [g for g in git_updates if g["crates"]]
     if plan["repin"] or lock_updates or swaps or git_updates:
         sr, sb = plan["start"]
         named = {g["crate"] for g in plan["repin"]} | {u["crate"] for u in lock_updates}
@@ -1027,7 +1050,7 @@ def lock_commands(op):
     cmds += [f"cargo update -p {c}" for c in dict.fromkeys(e["crate"] for e in op.get("edits", []))]
     cmds += [f"cargo update -p {u['crate']}@{u['locked']} --precise {u['target']}" for u in op.get("lock_updates", [])]
     cmds += [f"cargo update -p {c}" for c in dict.fromkeys(c for g in op.get("git_updates", []) for c in g["crates"])]
-    return cmds
+    return list(dict.fromkeys(cmds))
 
 
 def branch_name(op):
@@ -1062,6 +1085,42 @@ def hooked_git(wt, *args):
         run("nix", "develop", str(wt), "-c", *cmd, cwd=wt)
     else:
         run(*cmd)
+
+
+EDIT_KINDS = ("repin", "final_repin")
+
+
+def op_key(o):
+    return (o["repo"], o["branch"], o["kind"])
+
+
+def ready_edit_ops(report, done=()):
+    """Operations that become a PR now. Order rule: an operation that waits for another (the start repo waits for
+    the hoprnet PR) is `pending`, so it never appears here while that PR is open."""
+    return [o for o in report["operations"] if o["status"] == "ready" and o["kind"] in EDIT_KINDS and op_key(o) not in done]
+
+
+def pr_number(url):
+    return int(re.search(r"/pull/(\d+)", url).group(1))
+
+
+def wait_for_merge(prs, minutes, poll=60, state_of=None, clock=time.monotonic, sleep=time.sleep):
+    """Wait until every PR is merged. -> 'merged', 'closed' (one was closed without a merge) or 'timeout'. Never merges."""
+    state_of = state_of or (lambda repo, n: FORGE.pr_state(repo, n))
+    deadline = clock() + minutes * 60
+    waiting = {pr["url"]: (pr["repo"], pr_number(pr["url"])) for pr in prs}
+    while True:
+        for url, (repo, n) in list(waiting.items()):
+            st = state_of(repo, n)
+            if st == "merged":
+                del waiting[url]
+            elif st == "closed":
+                return "closed"
+        if not waiting:
+            return "merged"
+        if clock() >= deadline:
+            return "timeout"
+        sleep(poll)
 
 
 def apply_op(op, start, shell=None):
@@ -1241,6 +1300,9 @@ def main():
     ap.add_argument("--execute-no-release", action="store_true",
                     help="no releases: apply each ready repin or lock update in a git worktree, commit, push and open a PR")
     ap.add_argument("--yes", action="store_true", help="skip the confirmation prompts (with --execute or --execute-no-release)")
+    ap.add_argument("--wait-merge", type=int, default=0, metavar="MINUTES",
+                    help="after opening PRs, wait up to MINUTES for them to merge (the script never merges), then re-plan "
+                         "and open the PRs that were waiting for them")
     ap.add_argument("--max-releases", type=int, metavar="N", help="with --execute: release at most N repos in this run")
     ap.add_argument("--release-type", default="patch", choices=["rc", "patch", "minor", "major"],
                     help="version type after release, passed to the workflow")
@@ -1248,7 +1310,7 @@ def main():
     if a.workspace:
         WORKSPACE = a.workspace.resolve()
     RESUME_FLAGS = resume_flags(a)
-    start, report = (a.start, ""), None
+    start, report, opened_all = (a.start, ""), None, []
     try:
         start = parse_start(a.start)
         repo, branch = start
@@ -1282,22 +1344,40 @@ def main():
             plan = build_plan(repo, branch, planned)  # re-read heads and crates.io
             report = status(plan)
         if a.execute or a.execute_no_release:
-            todo = [o for o in report["operations"] if o["status"] == "ready" and o["kind"] in ("repin", "final_repin")]
-            if todo and not a.yes:
-                names = "; ".join(f"{o['repo']}@{o['branch']} ({o['kind']})" for o in todo)
-                try:
-                    ok = ask(f"open {len(todo)} PR(s): {names}? type 'yes': ") == "yes"
-                except EOFError:
-                    ok = False
-                if not ok:
-                    die(f"confirmation needed to open PRs for {names}; nothing done. Re-run interactively or pass --yes", "paused")
-            for o in todo:
-                log(f"applying {o['id']} ({o['kind']}) in {o['repo']}@{o['branch']}")
-                result = apply_op(o, start)
-                report["pull_requests"].append(result)
-                o["pull_request"] = result["url"]
+            done = set()
+            while True:
+                todo = ready_edit_ops(report, done)
+                if not todo:
+                    break
+                if not a.yes:
+                    names = "; ".join(f"{o['repo']}@{o['branch']} ({o['kind']})" for o in todo)
+                    try:
+                        ok = ask(f"open {len(todo)} PR(s): {names}? type 'yes': ") == "yes"
+                    except EOFError:
+                        ok = False
+                    if not ok:
+                        die(f"confirmation needed to open PRs for {names}; nothing done. Re-run interactively or pass --yes", "paused")
+                opened = []
+                for o in todo:
+                    log(f"applying {o['id']} ({o['kind']}) in {o['repo']}@{o['branch']}")
+                    result = apply_op(o, start)
+                    opened.append(result)
+                    opened_all.append(result)
+                    report["pull_requests"].append(result)
+                    o["pull_request"] = result["url"]
+                    done.add(op_key(o))
+                if not a.wait_merge:
+                    break
+                log(f"waiting up to {a.wait_merge} min for {len(opened)} PR(s) to merge: " + ", ".join(r["url"] for r in opened))
+                outcome = wait_for_merge(opened, a.wait_merge)
+                if outcome != "merged":
+                    die(f"stopped waiting: {outcome}. Open: " + ", ".join(r["url"] for r in opened), "paused")
+                plan = build_plan(repo, branch, planned)  # the merged PRs change what is ready
+                report = status(plan)
+                report["pull_requests"] = list(opened_all)
     except Stop as e:
         report = error_report(start, str(e), e.state)
+        report["pull_requests"] = list(opened_all)
     except Exception as e:  # a network error or a missing binary still ends in the documented error report
         report = error_report(start, f"unexpected {type(e).__name__}: {e}")
     print(render(report, a.output))

@@ -951,6 +951,109 @@ class ReadyPullRequests(unittest.TestCase):
         self.assertTrue(http.calls[1][2]["draft"])
 
 
+class OrderRule(unittest.TestCase):
+    """The start repo's PR is never opened while the PR of the repo it waits for (hoprnet) is open."""
+
+    def upstream(self):
+        return dict(repo="hoprnet", branch="release/4.0", gaps=[],
+                    lock_updates=[dict(crate="hopr-types", locked="2.3.0", target="2.3.2")])
+
+    def git(self):
+        return dict(repo="hoprnet", branch="release/4.0", crates=["hopr-lib"], locked="9e7372b04", head="88b935877")
+
+    def test_only_the_upstream_operation_can_be_applied_while_its_pr_is_open(self):
+        report = rc.status(plan([], upstream=[self.upstream()], git_updates=[self.git()]))
+        self.assertEqual([(o["kind"], o["repo"]) for o in rc.ready_edit_ops(report)], [("repin", "hoprnet")])
+        final = next(o for o in report["operations"] if o["kind"] == "final_repin")
+        self.assertEqual(final["status"], "pending")
+
+    def test_once_the_upstream_pr_is_merged_the_start_repo_operation_is_ready(self):
+        report = rc.status(plan([], git_updates=[self.git()]))  # hoprnet has nothing left to change
+        self.assertEqual([(o["kind"], o["repo"]) for o in rc.ready_edit_ops(report)], [("final_repin", "edge-client")])
+
+    def test_blocked_and_release_operations_are_never_applied_as_prs(self):
+        report = rc.status(plan([step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})],
+                                pins=[dict(file="Cargo.toml", line=1, key="x", crate="x", git="g", ref="branch b", locked="1.0.0",
+                                           target=None, step=False)]))
+        self.assertEqual(rc.ready_edit_ops(report), [])
+
+    def test_applied_operations_are_not_applied_twice_in_one_run(self):
+        report = rc.status(plan([], upstream=[self.upstream()]))
+        key = rc.op_key(report["operations"][0])
+        self.assertEqual(rc.ready_edit_ops(report, done={key}), [])
+
+
+class WaitForMerge(unittest.TestCase):
+    def prs(self):
+        return [dict(repo="hoprnet", url="https://github.com/hoprnet/hoprnet/pull/8593"),
+                dict(repo="edge-client", url="https://github.com/hoprnet/edge-client/pull/234")]
+
+    def run_wait(self, states, minutes=10):
+        calls, now = [], [0.0]
+        def state_of(repo, number):
+            calls.append((repo, number))
+            return states.pop(0) if isinstance(states, list) else states[(repo, number)]
+        result = rc.wait_for_merge(self.prs(), minutes, poll=60, state_of=state_of, clock=lambda: now[0],
+                                   sleep=lambda d: now.__setitem__(0, now[0] + d))
+        return result, calls
+
+    def test_pr_number_comes_from_the_url(self):
+        self.assertEqual(rc.pr_number("https://github.com/hoprnet/hoprnet/pull/8593"), 8593)
+
+    def test_returns_merged_when_every_pr_merged(self):
+        result, _ = self.run_wait({("hoprnet", 8593): "merged", ("edge-client", 234): "merged"})
+        self.assertEqual(result, "merged")
+
+    def test_waits_until_a_pr_merges(self):
+        result, calls = self.run_wait(["open", "open", "merged", "merged"])
+        self.assertEqual(result, "merged")
+        self.assertGreater(len(calls), 2)
+
+    def test_a_pr_closed_without_a_merge_stops_the_wait(self):
+        result, _ = self.run_wait({("hoprnet", 8593): "closed", ("edge-client", 234): "open"})
+        self.assertEqual(result, "closed")
+
+    def test_gives_up_after_the_time_limit(self):
+        result, calls = self.run_wait({("hoprnet", 8593): "open", ("edge-client", 234): "open"}, minutes=3)
+        self.assertEqual(result, "timeout")
+        self.assertLess(len(calls), 20)
+
+
+class SwapVersusRevision(unittest.TestCase):
+    """Once a pinned crate is on crates.io, the pin becomes a version; the git revision is no longer moved."""
+
+    def pin(self):
+        return dict(file="Cargo.toml", line=18, key="hopr-lib", crate="hopr-lib", git="https://github.com/hoprnet/hoprnet",
+                    ref="rev af80993c", locked="5.0.0-rc.5", target="5.0.0", step=True)
+
+    def git(self):
+        return dict(repo="hoprnet", branch="master", crates=["hopr-lib", "hopr-transport-mixer"], locked="af80993cc", head="88b935877",
+                    edits=[dict(file="Cargo.toml", line=18, key="hopr-lib", crate="hopr-lib", current="rev af80993c",
+                                required="88b935877aaa", swap="git_rev"),
+                           dict(file="Cargo.toml", line=20, key="hopr-transport-mixer", crate="hopr-transport-mixer",
+                                current="rev af80993c", required="88b935877aaa", swap="git_rev")])
+
+    def test_a_swapped_crate_gets_no_rev_edit_and_no_git_update(self):
+        ops = rc.operations(plan([], pins=[self.pin()], git_updates=[self.git()]))
+        final = ops[-1]
+        by_key = {e["key"]: e["swap"] for e in final["edits"]}
+        self.assertEqual(by_key["hopr-lib"], "git_to_version")           # one edit per line, the version one
+        self.assertEqual(by_key["hopr-transport-mixer"], "git_rev")      # still pinned: the revision moves
+        self.assertEqual(final["git_updates"][0]["crates"], ["hopr-transport-mixer"])
+        self.assertEqual([e["key"] for e in final["git_updates"][0]["edits"]], ["hopr-transport-mixer"])
+
+    def test_lock_commands_update_the_swapped_crate_once(self):
+        ops = rc.operations(plan([], pins=[self.pin()], git_updates=[self.git()]))
+        cmds = rc.lock_commands(ops[-1])
+        self.assertEqual(cmds.count("cargo update -p hopr-lib"), 1)      # from the version edit
+        self.assertEqual(cmds.count("cargo update -p hopr-transport-mixer"), 1)
+
+    def test_no_git_update_is_left_when_every_crate_of_the_group_is_swapped(self):
+        git = dict(self.git(), crates=["hopr-lib"], edits=self.git()["edits"][:1])
+        ops = rc.operations(plan([], pins=[self.pin()], git_updates=[git]))
+        self.assertEqual(ops[-1].get("git_updates"), [])
+
+
 class Layers(unittest.TestCase):
     def test_independent_operations_share_a_layer_and_dependents_come_after(self):
         a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
