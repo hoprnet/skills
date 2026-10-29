@@ -115,7 +115,7 @@ rendering.
    unless its repo is a step of the cascade (hoprnet): then it is only a note in
    `git_pinned_swaps`, because that repo is never released and the final operation already
    moves the git revision. `[patch]` git entries are only warned about.
-8. **Open the PRs.** `--execute-no-release` opens a draft PR for each ready repin or final
+8. **Open the PRs.** `--execute-no-release` opens a PR for each ready repin or final
    operation, without releasing: it creates a branch in a git worktree
    (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
    (inside `nix develop` when the repo has a flake, so the hooks run), commits, pushes and

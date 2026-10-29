@@ -50,7 +50,7 @@ entries are only warned about.
 --execute-no-release. For each ready repin or final operation: create a branch in a git
 worktree (<workspace>/<repo>-worktrees/), edit Cargo.toml (requirements, version bumps, git
 pins), refresh Cargo.lock (cargo, inside `nix develop` when the repo has a flake, so hooks
-run), commit, push, and open a draft PR. It asks `yes` once (--yes skips it). It never
+run), commit, push, and open a PR. It asks `yes` once (--yes skips it). It never
 merges and never releases. A branch name is derived from the edits, so a re-run finds the
 open PR and does not push a second one. --execute does the releases first, then the same.
 
@@ -70,7 +70,7 @@ turn the list into a workflow, or run the releases. Fields:
                    pin_swap: blocked_reason (a git pin with no published version yet)
   git_pinned_swaps git pins kept because their repo is a step that is never released
   bump_heads       heads that are only CI's version bump: crate, head, newest published
-  pull_requests    draft PRs opened or found by --execute / --execute-no-release
+  pull_requests    PRs opened or found by --execute / --execute-no-release
                    (operation, repo, base, branch, url, state opened | exists)
   ready_operations ids that can run now (no unfinished dependency)
   layers           operation ids per layer. An operation's layer is 1 + the highest layer of its
@@ -641,7 +641,7 @@ class GhForge:
     def run_info(self, repo, run_id):
         return json.loads(run("gh", "run", "view", str(run_id), "--repo", f"{ORG}/{repo}", "--json", "status,conclusion,jobs")[1])
 
-    def create_pr(self, repo, head, base, title, body, draft=True):
+    def create_pr(self, repo, head, base, title, body, draft=False):
         out = run("gh", "pr", "create", "--repo", f"{ORG}/{repo}", "--head", head, "--base", base, "--title", title,
                   "--body", body, *(["--draft"] if draft else []))[1]
         return out.strip().splitlines()[-1]
@@ -711,7 +711,7 @@ class ApiForge:
                                steps=[dict(name=st["name"], conclusion=st["conclusion"]) for st in j.get("steps", [])])
                           for j in jobs])
 
-    def create_pr(self, repo, head, base, title, body, draft=True):
+    def create_pr(self, repo, head, base, title, body, draft=False):
         return self._call("POST", f"/repos/{ORG}/{repo}/pulls",
                           dict(head=head, base=base, title=title, body=body, draft=draft), ok=(201,))["html_url"]
 
@@ -1065,7 +1065,7 @@ def hooked_git(wt, *args):
 
 
 def apply_op(op, start, shell=None):
-    """Apply a repin or final repin in a new worktree branch, commit, push, open a draft PR. Never merges."""
+    """Apply a repin or final repin in a new worktree branch, commit, push, open a PR. Never merges."""
     shell = shell or in_shell
     repo, base, branch = op["repo"], op["branch"], branch_name(op)
     existing = FORGE.find_pr(repo, branch)
@@ -1075,7 +1075,7 @@ def apply_op(op, start, shell=None):
     git(repo, "fetch", "-q", "origin")
     title, body = pr_text(op, start)
     if git(repo, "ls-remote", "--heads", "origin", branch).strip():  # pushed earlier, the PR step failed
-        url = FORGE.create_pr(repo, branch, base, title, body, draft=True)
+        url = FORGE.create_pr(repo, branch, base, title, body)
         return dict(operation=op["id"], repo=repo, base=base, branch=branch, url=url, state="opened")
     if wt.exists() or git(repo, "branch", "--list", branch).strip():  # a failed attempt left this behind; nothing was pushed
         git(repo, "worktree", "remove", "--force", str(wt), check=False)
@@ -1094,7 +1094,7 @@ def apply_op(op, start, shell=None):
     hooked_git(wt, "add", "--", *files, *(["Cargo.lock"] if (wt / "Cargo.lock").exists() else []))
     hooked_git(wt, "commit", "-q", "-m", title, "-m", f"{body}\n\n{CO_AUTHOR}")
     hooked_git(wt, "push", "-q", "-u", "origin", branch)
-    url = FORGE.create_pr(repo, branch, base, title, body, draft=True)
+    url = FORGE.create_pr(repo, branch, base, title, body)
     return dict(operation=op["id"], repo=repo, base=base, branch=branch, url=url, state="opened", worktree=str(wt))
 
 
@@ -1239,7 +1239,7 @@ def main():
     ap.add_argument("--workspace", type=Path, help="directory holding the repo clones (default: current directory)")
     ap.add_argument("--execute", action="store_true", help="trigger the release workflows")
     ap.add_argument("--execute-no-release", action="store_true",
-                    help="no releases: apply each ready repin or lock update in a git worktree, commit, push and open a draft PR")
+                    help="no releases: apply each ready repin or lock update in a git worktree, commit, push and open a PR")
     ap.add_argument("--yes", action="store_true", help="skip the confirmation prompts (with --execute or --execute-no-release)")
     ap.add_argument("--max-releases", type=int, metavar="N", help="with --execute: release at most N repos in this run")
     ap.add_argument("--release-type", default="patch", choices=["rc", "patch", "minor", "major"],
@@ -1286,7 +1286,7 @@ def main():
             if todo and not a.yes:
                 names = "; ".join(f"{o['repo']}@{o['branch']} ({o['kind']})" for o in todo)
                 try:
-                    ok = ask(f"open {len(todo)} draft PR(s): {names}? type 'yes': ") == "yes"
+                    ok = ask(f"open {len(todo)} PR(s): {names}? type 'yes': ") == "yes"
                 except EOFError:
                     ok = False
                 if not ok:

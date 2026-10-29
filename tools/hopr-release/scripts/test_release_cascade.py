@@ -345,7 +345,7 @@ class GitFlow(unittest.TestCase):
             prs = []
             def git_env(self): return {}
             def find_pr(self, repo, head): return None
-            def create_pr(self, repo, head, base, title, body, draft=True):
+            def create_pr(self, repo, head, base, title, body, draft=False):
                 self.prs.append((repo, head, base, title, draft))
                 return "https://github.com/hoprnet/hopr-api/pull/1"
         rc.FORGE = Forge()
@@ -376,7 +376,7 @@ class GitFlow(unittest.TestCase):
         self.assertEqual(lock, "# lock updated\n")
         msg = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "log", "-1", "--format=%B", branch).stdout
         self.assertIn("Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>", msg)
-        self.assertEqual(self.forge.prs[0][:3] + self.forge.prs[0][4:], ("hopr-api", branch, "main", True))
+        self.assertEqual(self.forge.prs[0][:3] + self.forge.prs[0][4:], ("hopr-api", branch, "main", False))  # ready, not draft
         self.assertTrue(self.cmds and self.cmds[0][0].startswith("cargo metadata"))
         # the main branch is untouched
         main = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "show", "main:Cargo.toml").stdout
@@ -928,6 +928,27 @@ class GitPinnedSwaps(unittest.TestCase):
 
     def test_the_notes_show_in_the_plain_report(self):
         self.assertIn("git pin kept: hopr-lib", rc.render(rc.status(plan([], pins=[self.pin()])), "plain"))
+
+
+class ReadyPullRequests(unittest.TestCase):
+    def test_gh_opens_a_ready_pr_unless_a_draft_is_asked_for(self):
+        calls = []
+        saved = rc.run
+        rc.run = lambda *a, **kw: calls.append(a) or (0, "https://github.com/hoprnet/x/pull/1\n")
+        try:
+            rc.GhForge().create_pr("x", "head", "main", "t", "b")
+            rc.GhForge().create_pr("x", "head", "main", "t", "b", draft=True)
+        finally:
+            rc.run = saved
+        self.assertNotIn("--draft", calls[0])
+        self.assertIn("--draft", calls[1])
+
+    def test_the_api_opens_a_ready_pr_unless_a_draft_is_asked_for(self):
+        http = FakeHttp({("POST", "/pulls"): (201, {"html_url": "https://github.com/hoprnet/x/pull/1"})})
+        rc.ApiForge("t", http).create_pr("x", "head", "main", "t", "b")
+        rc.ApiForge("t", http).create_pr("x", "head", "main", "t", "b", draft=True)
+        self.assertFalse(http.calls[0][2]["draft"])
+        self.assertTrue(http.calls[1][2]["draft"])
 
 
 class Layers(unittest.TestCase):

@@ -79,7 +79,7 @@ load-bearing ones:
 Repinning and release work is the canonical "babysit until green, merge nothing until
 told" loop: keep failing checks and review threads resolved across every PR in the
 cascade, but gate every merge, publish, and tag on explicit approval. Branching,
-committing, and draft PRs follow git-workflow; the never-merge/never-tag-without-
+committing, and PRs follow git-workflow; the never-merge/never-tag-without-
 in-the-moment-approval rule holds here especially, because a premature merge on one
 line forces the whole cascade to be redone.
 
