@@ -13,6 +13,10 @@ mapped to its repo and branch:
   start branch is release/X.Y         -> compat/vX, else release/vX, in every repo
   repo has no such branch             -> fixed input: only checked to be on crates.io
 
+GitHub access: gh when it is installed and logged in, else the REST API with GH_TOKEN or
+GITHUB_TOKEN (--forge gh|api forces one). The token goes to git through an environment header,
+never into a command line or a file. crates.io needs no token.
+
 Run from the directory that holds the repo clones, or pass --workspace. Missing org repos
 are cloned there (partial clone). Default is a DRY RUN: it prints the operations and
 triggers nothing. --execute runs the ready release workflows with `gh workflow run`, all
@@ -24,8 +28,8 @@ plan, because CI bumps each head after a release. --max-releases N caps the repo
 A step is blocked while a repo's own requirements do not admit the versions released below
 it. Repin that repo first. A release publishes to crates.io and cannot be undone.
 
-Output. stdout is always one JSON document (schema "hopr-release-cascade/v2"); progress
-goes to stderr. The dry run lists every operation to do, so a bot can propagate the repins,
+Output. -o json (default) prints one indented JSON document, -o mjson the same minified on
+one line, -o plain a text rendering. Schema "hopr-release-cascade/v2"; progress goes to stderr. The dry run lists every operation to do, so a bot can propagate the repins,
 turn the list into a workflow, or run the releases. Fields:
   state            release_ready | repin_required | final_repin_required
                    | manual_release_required | complete | paused | error
@@ -38,6 +42,9 @@ turn the list into a workflow, or run the releases. Fields:
                    repin: edits (file, line, key, current, required), version_bumps, then
                    final_repin: edits, lock_updates (crate, locked, target), then
   ready_operations ids that can run now (no unfinished dependency)
+  layers           operation ids per layer. An operation's layer is 1 + the highest layer of its
+                   depends_on; operations in one layer are independent (concurrency_group
+                   "layer-N" on each operation)
   next             the first ready operation, or {"kind": "none"}
   conditions       what must hold before the cascade continues, each with a verify command
   resume           the command to run once the conditions hold (null when complete)
@@ -45,7 +52,7 @@ turn the list into a workflow, or run the releases. Fields:
 Exit code: 0 for every state except error (2).
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import argparse, datetime, json, os, re, subprocess, sys, time, tomllib, urllib.request, urllib.error
+import argparse, base64, datetime, json, os, re, shutil, subprocess, sys, time, tomllib, urllib.parse, urllib.request, urllib.error
 from pathlib import Path
 
 ORG = "hoprnet"
@@ -56,6 +63,7 @@ DEP_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "hopr-release" / "crates-repository.json"
 WORKSPACE = Path.cwd()
 SCHEMA = "hopr-release-cascade/v2"
+FORGE = None  # GhForge or ApiForge, chosen in main()
 
 
 class Stop(Exception):
@@ -75,7 +83,10 @@ def log(*a):
 
 
 def run(*a, check=True):
-    r = subprocess.run(a, capture_output=True, text=True)
+    env = None
+    if a and a[0] == "git" and FORGE is not None and FORGE.git_env():
+        env = {**os.environ, **FORGE.git_env()}
+    r = subprocess.run(a, capture_output=True, text=True, env=env)
     if check and r.returncode:
         die(f"command failed: {' '.join(a)}\n{r.stderr.strip()}")
     return r.returncode, r.stdout
@@ -92,7 +103,7 @@ def has_ref(repo, branch):
 def ensure(repo):
     if not (WORKSPACE / repo / ".git").exists():
         log(f"  cloning {ORG}/{repo} into {WORKSPACE / repo} (partial clone)")
-        run("gh", "repo", "clone", f"{ORG}/{repo}", str(WORKSPACE / repo), "--", "--filter=blob:none", "--no-checkout", "--quiet")
+        FORGE.clone(repo, WORKSPACE / repo)
     git(repo, "fetch", "-q", "origin")
 
 
@@ -374,6 +385,114 @@ def gaps(entries, target, owned):
             if e["crate"] in owned and e["crate"] in target and not admits(e["req"], target[e["crate"]])]
 
 
+# ---------- GitHub access: gh when it works, else the REST API with a token ----------
+
+def choose_forge(which=shutil.which, gh_ok=None, env=os.environ, force=None):
+    """'gh' when gh is installed and logged in, else 'api' when GH_TOKEN or GITHUB_TOKEN is set."""
+    gh_ok = gh_ok or (lambda: run("gh", "auth", "status", check=False)[0] == 0)
+    gh_ready = bool(which("gh")) and gh_ok()
+    token = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")
+    if force == "gh":
+        return "gh" if gh_ready else die("--forge gh: gh is missing or not logged in (gh auth login)")
+    if force == "api":
+        return "api" if token else die("--forge api: set GH_TOKEN or GITHUB_TOKEN")
+    if gh_ready:
+        return "gh"
+    if token:
+        return "api"
+    return die("no GitHub access: install gh and log in (gh auth login), or set GH_TOKEN or GITHUB_TOKEN")
+
+
+class GhForge:
+    """GitHub through the gh CLI."""
+
+    def git_env(self):
+        return {}
+
+    def clone(self, repo, dest):
+        run("gh", "repo", "clone", f"{ORG}/{repo}", str(dest), "--", "--filter=blob:none", "--no-checkout", "--quiet")
+
+    def dispatch(self, repo, workflow, ref, inputs):
+        run("gh", "workflow", "run", workflow, "--repo", f"{ORG}/{repo}", "--ref", ref,
+            *[a for k, v in inputs.items() for a in ("-f", f"{k}={v}")])
+
+    def run_ids(self, repo, workflow, branch):
+        rows = json.loads(run("gh", "run", "list", "--repo", f"{ORG}/{repo}", "--workflow", workflow, "--branch", branch,
+                              "--event", "workflow_dispatch", "--limit", "20", "--json", "databaseId")[1] or "[]")
+        return {r["databaseId"] for r in rows}
+
+    def run_info(self, repo, run_id):
+        return json.loads(run("gh", "run", "view", str(run_id), "--repo", f"{ORG}/{repo}", "--json", "status,conclusion,jobs")[1])
+
+    def create_pr(self, repo, head, base, title, body, draft=True):
+        out = run("gh", "pr", "create", "--repo", f"{ORG}/{repo}", "--head", head, "--base", base, "--title", title,
+                  "--body", body, *(["--draft"] if draft else []))[1]
+        return out.strip().splitlines()[-1]
+
+
+def _http(token):
+    def call(method, url, body=None):
+        req = urllib.request.Request(url, method=method, data=None if body is None else json.dumps(body).encode(), headers={
+            "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "User-Agent": UA,
+            "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                raw = r.read()
+                return r.status, (json.loads(raw) if raw else None)
+        except urllib.error.HTTPError as e:
+            raw = e.read()
+            return e.code, (json.loads(raw) if raw else None)
+    return call
+
+
+class ApiForge:
+    """GitHub through the REST API with a token. Git uses the same token through an environment header, so the
+    token is in no command line and in no file."""
+
+    API = "https://api.github.com"
+
+    def __init__(self, token, http=None):
+        self.token, self.http = token, http or _http(token)
+
+    def git_env(self):
+        basic = base64.b64encode(f"x-access-token:{self.token}".encode()).decode()
+        return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}"}
+
+    def _call(self, method, path, body=None, ok=(200,)):
+        status, data = self.http(method, self.API + path, body)
+        if status not in ok:
+            die(f"GitHub API {method} {path} returned {status}: {(data or {}).get('message', '')}")
+        return data
+
+    def clone(self, repo, dest):
+        run("git", "clone", "--filter=blob:none", "--no-checkout", "--quiet", f"https://github.com/{ORG}/{repo}", str(dest))
+
+    def dispatch(self, repo, workflow, ref, inputs):
+        self._call("POST", f"/repos/{ORG}/{repo}/actions/workflows/{workflow}/dispatches", {"ref": ref, "inputs": inputs}, ok=(204,))
+
+    def run_ids(self, repo, workflow, branch):
+        q = f"branch={urllib.parse.quote(branch, safe='')}&event=workflow_dispatch&per_page=20"
+        return {r["id"] for r in self._call("GET", f"/repos/{ORG}/{repo}/actions/workflows/{workflow}/runs?{q}")["workflow_runs"]}
+
+    def run_info(self, repo, run_id):
+        run_ = self._call("GET", f"/repos/{ORG}/{repo}/actions/runs/{run_id}")
+        jobs = self._call("GET", f"/repos/{ORG}/{repo}/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
+        return dict(status=run_["status"], conclusion=run_["conclusion"],
+                    jobs=[dict(name=j["name"], conclusion=j["conclusion"],
+                               steps=[dict(name=st["name"], conclusion=st["conclusion"]) for st in j.get("steps", [])])
+                          for j in jobs])
+
+    def create_pr(self, repo, head, base, title, body, draft=True):
+        return self._call("POST", f"/repos/{ORG}/{repo}/pulls",
+                          dict(head=head, base=base, title=title, body=body, draft=draft), ok=(201,))["html_url"]
+
+
+def make_forge(force=None):
+    kind = choose_forge(force=force)
+    return GhForge() if kind == "gh" else ApiForge(os.environ.get("GH_TOKEN") or os.environ["GITHUB_TOKEN"])
+
+
 # ---------- status report: the single output format ----------
 
 def line_of(repo, ref, file, key):
@@ -432,8 +551,11 @@ def operations(plan):
             description=f"update {sr}@{sb} to the released versions"
                         + (f" (cargo update -p {' -p '.join(u['crate'] for u in lock_updates)})" if lock_updates else ""),
             then="open a PR with the requirement edits and a refreshed Cargo.lock, then merge it")
-    for op in ops:
+    layer = {}
+    for op in ops:  # dependencies come before their dependents in the list
         op["status"] = "pending" if op["depends_on"] else "ready"
+        layer[op["id"]] = 1 + max((layer[d] for d in op["depends_on"]), default=0)
+        op["layer"], op["concurrency_group"] = layer[op["id"]], f"layer-{layer[op['id']]}"
     return ops
 
 
@@ -483,7 +605,9 @@ def status(plan):
     return dict(schema=SCHEMA, generated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                 start=dict(repo=start[0], branch=start[1]), state=state, summary=summary,
                 repos_to_update=repos_to_update, crates_to_change=crates_to_change, operations=ops,
-                ready_operations=[o["id"] for o in ready], next=nxt, conditions=conditions,
+                ready_operations=[o["id"] for o in ready],
+                layers=[[o["id"] for o in ops if o["layer"] == n] for n in sorted({o["layer"] for o in ops})],
+                next=nxt, conditions=conditions,
                 fixed_inputs=fixed, git_pinned_out_of_scope=plan["pinned"], warnings=warnings,
                 resume=resume if state != "complete" else None)
 
@@ -491,18 +615,55 @@ def status(plan):
 def error_report(start, msg, state="error"):
     return dict(schema=SCHEMA, generated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                 start=dict(repo=start[0], branch=start[1]), state=state, summary=msg, repos_to_update=[],
-                crates_to_change=[], operations=[], ready_operations=[], next=dict(kind="none"), conditions=[],
+                crates_to_change=[], operations=[], ready_operations=[], layers=[], next=dict(kind="none"), conditions=[],
                 fixed_inputs=[], git_pinned_out_of_scope=[], warnings=[], resume=resume_command(start))
 
 
-def gh_json(*a):
-    return json.loads(run("gh", *a)[1] or "null")
+def op_detail(o):
+    if o["kind"].startswith("release"):
+        return ", ".join(f"{c['name']} {c['version']}" for c in o["crates"])
+    parts = [f"{e['key']} {e['current']} -> {e['required']}" for e in o.get("edits", [])]
+    parts += [f"bump {b['crate']} {b['current']} -> {b['suggested']}" for b in o.get("version_bumps", [])]
+    parts += [f"lock {u['crate']} {u['locked']} -> {u['target']}" for u in o.get("lock_updates", [])]
+    return "; ".join(parts)
+
+
+def render_plain(r):
+    out = [f"release cascade from {r['start']['repo']}@{r['start']['branch']} ({r['schema']}, {r['generated_at']})",
+           f"state: {r['state']}", f"summary: {r['summary']}"]
+    n = r["next"]
+    out.append("next: none" if n["kind"] == "none" else f"next: {n['id']} {n['kind']} {n['repo']}@{n['branch']}: {n['description']}")
+    if r["operations"]:
+        out.append(f"operations ({len(r['operations'])}):")
+        for o in r["operations"]:
+            deps = f" after {','.join(o['depends_on'])}" if o["depends_on"] else ""
+            out.append(f"  {o['id']:<6}{o['concurrency_group']:<9}{o['status']:<8}{o['kind']:<15}"
+                       f"{o['repo']}@{o['branch']}{deps}: {op_detail(o)}")
+    for c in r["conditions"]:
+        out += [f"condition {c['id']}: {c['description']}", f"  verify: {c['verify']}"]
+    for f in r["fixed_inputs"]:
+        out.append(f"fixed input: {f['crate']} {f['version']} ({f.get('reason', '')}, on crates.io: {f['on_crates_io']})")
+    if r["git_pinned_out_of_scope"]:
+        out.append("git-pinned: " + ", ".join(r["git_pinned_out_of_scope"]))
+    out += [f"warning: {w}" for w in r["warnings"]]
+    if r["resume"]:
+        out.append(f"resume: {r['resume']}")
+    return "\n".join(out)
+
+
+def render(report, fmt):
+    """json: indented. mjson: minified, one line. plain: text for people."""
+    if fmt == "json":
+        return json.dumps(report, indent=2)
+    if fmt == "mjson":
+        return json.dumps(report, separators=(",", ":"))
+    if fmt == "plain":
+        return render_plain(report)
+    return die(f"unknown output format {fmt!r}: use json, mjson or plain")
 
 
 def run_ids(repo, wf, branch):
-    rows = gh_json("run", "list", "--repo", f"{ORG}/{repo}", "--workflow", wf, "--branch", branch,
-                   "--event", "workflow_dispatch", "--limit", "20", "--json", "databaseId")
-    return {r["databaseId"] for r in rows}
+    return FORGE.run_ids(repo, wf, branch)
 
 
 def wait_publish_step(repo, run_id, todo, timeout=45 * 60):
@@ -510,7 +671,7 @@ def wait_publish_step(repo, run_id, todo, timeout=45 * 60):
     but every version is on crates.io, carry on. Later steps of the run do not matter."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        d = gh_json("run", "view", str(run_id), "--repo", f"{ORG}/{repo}", "--json", "status,conclusion,jobs")
+        d = FORGE.run_info(repo, run_id)
         steps = [st for j in d["jobs"] for st in j["steps"] if st["name"] == PUBLISH_STEP]
         state = steps[0]["conclusion"] if steps else None
         if state == "success":
@@ -531,8 +692,7 @@ def release_step(s, release_type):
     tag = f"[{s['repo']}]"
     label = f"{s['repo']}@{s['branch']} ({', '.join(f'{n} {v}' for n, v in s['todo'].items())})"
     before = run_ids(s["repo"], s["workflow"], s["branch"])
-    run("gh", "workflow", "run", s["workflow"], "--repo", f"{ORG}/{s['repo']}", "--ref", s["branch"],
-        "-f", f"release_type={release_type}")
+    FORGE.dispatch(s["repo"], s["workflow"], s["branch"], {"release_type": release_type})
     new = set()
     for _ in range(12):  # the run takes a few seconds to appear
         time.sleep(5)
@@ -581,9 +741,13 @@ def release_batch(steps, release_type):
 
 
 def main():
-    global WORKSPACE
+    global WORKSPACE, FORGE
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--from", dest="start", required=True, metavar="REPO@BRANCH", help="repo and branch to release for")
+    ap.add_argument("-o", "--output", default="json", choices=["json", "mjson", "plain"],
+                    help="json: indented (default); mjson: minified, one line; plain: text for people")
+    ap.add_argument("--forge", default="auto", choices=["auto", "gh", "api"],
+                    help="auto: gh when installed and logged in, else the REST API with GH_TOKEN or GITHUB_TOKEN")
     ap.add_argument("--workspace", type=Path, help="directory holding the repo clones (default: current directory)")
     ap.add_argument("--execute", action="store_true", help="trigger the release workflows")
     ap.add_argument("--yes", action="store_true", help="skip the confirmation prompt (with --execute)")
@@ -599,7 +763,7 @@ def main():
     start = (repo, branch)
     report = None
     try:
-        run("gh", "auth", "status")
+        FORGE = make_forge(None if a.forge == "auto" else a.forge)
         plan = build_plan(repo, branch)
         report = status(plan)
         released, planned = 0, planned_crates(report)
@@ -624,7 +788,7 @@ def main():
             report = status(plan)
     except Stop as e:
         report = error_report(start, str(e), e.state)
-    print(json.dumps(report, indent=2))
+    print(render(report, a.output))
     sys.exit(2 if report["state"] == "error" else 0)
 
 

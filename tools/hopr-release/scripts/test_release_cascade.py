@@ -220,5 +220,120 @@ class Report(unittest.TestCase):
         self.assertEqual((r["state"], r["operations"], r["next"], r["resume"]), ("complete", [], {"kind": "none"}, None))
 
 
+class Layers(unittest.TestCase):
+    def test_independent_operations_share_a_layer_and_dependents_come_after(self):
+        a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
+        b = step("hopr-bindings", {"hopr-bindings": "5.3.0"}, todo={"hopr-bindings": "5.3.0"})
+        c = step("hopr-api", {"hopr-api": "4.4.1"}, todo={"hopr-api": "4.4.1"}, gaps=[gap("hopr-types", "4.1.0", "5.0.0")],
+                 requires=["hopr-types"])
+        ops = rc.operations(plan([a, b, c]))
+        layer = {o["id"]: o["layer"] for o in ops}
+        self.assertEqual([layer["op-1"], layer["op-2"]], [1, 1])      # types, bindings
+        self.assertEqual(layer["op-3"], 2)                            # repin api after types
+        self.assertEqual(layer["op-4"], 3)                            # release api after its repin
+        self.assertEqual([o["concurrency_group"] for o in ops], ["layer-1", "layer-1", "layer-2", "layer-3"])
+
+    def test_report_lists_the_operation_ids_of_each_layer(self):
+        a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
+        b = step("hopr-bindings", {"hopr-bindings": "5.3.0"}, todo={"hopr-bindings": "5.3.0"})
+        r = rc.status(plan([a, b]))
+        self.assertEqual(r["layers"], [["op-1", "op-2"]])
+
+
+class Output(unittest.TestCase):
+    def report(self):
+        a = step("hopr-types", {"hopr-types": "5.0.0"}, todo={"hopr-types": "5.0.0"})
+        api = step("hopr-api", {"hopr-api": "4.4.1"}, todo={"hopr-api": "4.4.1"}, gaps=[gap("hopr-types", "4.1.0", "5.0.0")],
+                   requires=["hopr-types"])
+        return rc.status(plan([a, api]))
+
+    def test_json_is_indented_and_mjson_is_one_line_with_the_same_content(self):
+        r = self.report()
+        pretty, mini = rc.render(r, "json"), rc.render(r, "mjson")
+        self.assertGreater(pretty.count("\n"), 10)
+        self.assertEqual(mini.count("\n"), 0)
+        self.assertEqual(rc.json.loads(pretty), rc.json.loads(mini))
+        self.assertNotIn(", ", mini.split('"schema"')[0])
+
+    def test_plain_shows_state_next_operations_and_resume(self):
+        text = rc.render(self.report(), "plain")
+        for needle in ("state: release_ready", "next: op-1", "op-1", "release", "layer-1", "repin", "hopr-types 4.1.0 -> 5.0.0", "resume:"):
+            self.assertIn(needle, text)
+
+    def test_plain_for_an_error_report(self):
+        text = rc.render(rc.error_report(("edge-client", "main"), "boom"), "plain")
+        self.assertIn("state: error", text)
+        self.assertIn("boom", text)
+
+    def test_unknown_format_is_rejected(self):
+        with self.assertRaises(rc.Stop):
+            rc.render(self.report(), "xml")
+
+
+class FakeHttp:
+    """Records requests and returns canned (status, json) answers keyed by (method, path suffix)."""
+
+    def __init__(self, answers):
+        self.answers, self.calls = answers, []
+
+    def __call__(self, method, url, body=None):
+        self.calls.append((method, url, body))
+        for (m, suffix), out in self.answers.items():
+            if m == method and url.split("?")[0].endswith(suffix):
+                return out
+        raise AssertionError(f"unexpected {method} {url}")
+
+
+class Forge(unittest.TestCase):
+    def test_gh_is_used_when_installed_and_logged_in(self):
+        self.assertEqual(rc.choose_forge(which=lambda n: "/bin/gh", gh_ok=lambda: True, env={}), "gh")
+
+    def test_token_is_used_when_gh_is_missing(self):
+        self.assertEqual(rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={"GH_TOKEN": "t"}), "api")
+        self.assertEqual(rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={"GITHUB_TOKEN": "t"}), "api")
+
+    def test_token_is_used_when_gh_is_not_logged_in(self):
+        self.assertEqual(rc.choose_forge(which=lambda n: "/bin/gh", gh_ok=lambda: False, env={"GH_TOKEN": "t"}), "api")
+
+    def test_neither_gh_nor_token_is_an_error_that_names_the_fix(self):
+        with self.assertRaises(rc.Stop) as e:
+            rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={})
+        self.assertIn("GH_TOKEN", str(e.exception))
+
+    def test_forced_choice_is_honoured(self):
+        self.assertEqual(rc.choose_forge(which=lambda n: "/bin/gh", gh_ok=lambda: True, env={"GH_TOKEN": "t"}, force="api"), "api")
+        with self.assertRaises(rc.Stop):
+            rc.choose_forge(which=lambda n: None, gh_ok=lambda: False, env={}, force="gh")
+
+    def test_api_dispatch_posts_the_ref_and_inputs(self):
+        http = FakeHttp({("POST", "/repos/hoprnet/hopr-types/actions/workflows/release.yaml/dispatches"): (204, None)})
+        rc.ApiForge("tok", http).dispatch("hopr-types", "release.yaml", "compat/v4", {"release_type": "patch"})
+        method, url, body = http.calls[0]
+        self.assertEqual((method, body), ("POST", {"ref": "compat/v4", "inputs": {"release_type": "patch"}}))
+        self.assertTrue(url.startswith("https://api.github.com/repos/hoprnet/hopr-types/"))
+
+    def test_api_run_ids_reads_workflow_runs(self):
+        http = FakeHttp({("GET", "/repos/hoprnet/contracts/actions/workflows/release.yaml/runs"):
+                         (200, {"workflow_runs": [{"id": 7}, {"id": 9}]})})
+        self.assertEqual(rc.ApiForge("tok", http).run_ids("contracts", "release.yaml", "release/v4"), {7, 9})
+        self.assertIn("branch=release%2Fv4", http.calls[0][1])
+        self.assertIn("event=workflow_dispatch", http.calls[0][1])
+
+    def test_api_run_info_joins_the_run_and_its_jobs(self):
+        http = FakeHttp({("GET", "/repos/hoprnet/contracts/actions/runs/5"): (200, {"status": "in_progress", "conclusion": None}),
+                         ("GET", "/repos/hoprnet/contracts/actions/runs/5/jobs"):
+                         (200, {"jobs": [{"name": "Build Library / Build", "conclusion": None,
+                                          "steps": [{"name": "Publish library", "conclusion": "success"}]}]})})
+        info = rc.ApiForge("tok", http).run_info("contracts", 5)
+        self.assertEqual(info["status"], "in_progress")
+        self.assertEqual(info["jobs"][0]["steps"][0], {"name": "Publish library", "conclusion": "success"})
+
+    def test_api_token_never_appears_in_a_git_command_line(self):
+        env = rc.ApiForge("sekret", FakeHttp({})).git_env()
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertIn("basic", env["GIT_CONFIG_VALUE_0"])
+        self.assertNotIn("sekret", env["GIT_CONFIG_VALUE_0"])  # base64, not plain
+
+
 if __name__ == "__main__":
     unittest.main()

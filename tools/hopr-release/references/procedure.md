@@ -66,6 +66,12 @@ release-cascade.py --from edge-client@main --execute  # release every ready step
 Run it from the directory that holds the repo clones, or pass `--workspace`. Missing org
 repos are cloned there (partial clone). No config file exists: each run derives the graph.
 
+GitHub access uses `gh` when it is installed and logged in. Otherwise it uses the REST API
+with `GH_TOKEN` or `GITHUB_TOKEN` (`--forge gh|api` forces one), so a VM with no `gh` works.
+The token reaches git through an environment header and is never in a command line or a file.
+`-o json` (default) prints indented JSON, `-o mjson` the same on one line, `-o plain` a text
+rendering.
+
 1. **Discover.** Read `Cargo.lock` at the start branch and walk the graph. A crate is an
    org crate when crates.io lists its `repository` under `github.com/hoprnet`. Lookups are
    cached in `~/.cache/hopr-release/`, one request per second. A crate whose repo is not
@@ -108,6 +114,7 @@ or run the releases itself.
 | `crates_to_change` | Per crate: the version to publish, repo, branch, `republish`, operation id. |
 | `operations` | The full ordered list. Each has `id`, `kind`, `repo`, `branch`, `status` (`ready` or `pending`), `depends_on`, `description`. |
 | `ready_operations`, `next` | Ids that can run now, and the first of them. |
+| `layers` | Operation ids per layer. A layer is 1 + the highest layer among an operation's `depends_on`. Operations in one layer are independent; each also carries `layer` and `concurrency_group` (`layer-N`). |
 | `conditions` | What must hold before the cascade continues, each with a `verify` command. |
 | `resume` | The command to run once the conditions hold. `null` when complete. |
 | `fixed_inputs`, `git_pinned_out_of_scope`, `warnings` | Inputs only checked on crates.io, org crates pinned by git (repin, not released), and problems such as a yanked fixed input. |
