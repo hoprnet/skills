@@ -766,9 +766,9 @@ class GhForge:
         d = json.loads(run("gh", "api", f"repos/{ORG}/{repo}/pulls/{number}")[1])
         return "merged" if d.get("merged") else d["state"]
 
-    def find_pr(self, repo, head, base=None):
+    def find_pr(self, repo, head, base=None, state="open"):
         rows = json.loads(run("gh", "pr", "list", "--repo", f"{ORG}/{repo}", "--head", head, *(["--base", base] if base else []),
-                              "--state", "open", "--json", "url")[1] or "[]")
+                              "--state", state, "--json", "url")[1] or "[]")
         return rows[0]["url"] if rows else None
 
     def dispatch(self, repo, workflow, ref, inputs):
@@ -907,8 +907,8 @@ class ApiForge:
         d = self._call("GET", f"/repos/{ORG}/{repo}/pulls/{number}")
         return "merged" if d.get("merged") else d["state"]
 
-    def find_pr(self, repo, head, base=None):
-        q = f"head={ORG}:{urllib.parse.quote(head, safe='')}&state=open" + (f"&base={urllib.parse.quote(base, safe='')}" if base else "")
+    def find_pr(self, repo, head, base=None, state="open"):
+        q = f"head={ORG}:{urllib.parse.quote(head, safe='')}&state={state}" + (f"&base={urllib.parse.quote(base, safe='')}" if base else "")
         rows = self._call("GET", f"/repos/{ORG}/{repo}/pulls?{q}")
         return rows[0]["html_url"] if rows else None
 
@@ -1308,12 +1308,12 @@ def lock_commands(op):
     return list(dict.fromkeys(cmds))
 
 
-def branch_name(op, base_sha=None):
-    """Deterministic, so a re-run finds its own branch. Everything the PR holds goes into the hash, including the git
+def branch_name(op, base_sha=None, attempt=0):
+    """Deterministic, so a re-run finds its own branch; `attempt` > 0 adds a suffix when an earlier PR on the name was closed. Everything the PR holds goes into the hash, including the git
     revision move and the base commit: a branch from an earlier run with other content must not be reused."""
     content = [op.get("edits"), op.get("version_bumps"), op.get("lock_updates"),
                [(g["repo"], g["branch"], sorted(g["crates"]), g["head"]) for g in op.get("git_updates", [])], base_sha]
-    return f"chore/release-cascade-{op['kind']}-{hashlib.sha1(json.dumps(content, sort_keys=True).encode()).hexdigest()[:8]}"
+    return f"chore/release-cascade-{op['kind']}-{hashlib.sha1(json.dumps(content, sort_keys=True).encode()).hexdigest()[:8]}" + (f"-{attempt}" if attempt else "")
 
 
 def pr_text(op, start):
@@ -1398,8 +1398,14 @@ def apply_op(op, start, shell=None):
     shell = shell or in_shell
     repo, base = op["repo"], op["branch"]
     git(repo, "fetch", "-q", "origin")
-    branch = branch_name(op, git(repo, "rev-parse", f"origin/{base}").strip())
-    existing = FORGE.find_pr(repo, branch, base)
+    base_sha = git(repo, "rev-parse", f"origin/{base}").strip()
+    attempt = 0
+    while True:  # a closed or merged PR on the name means that content was rejected: never reopen onto its branch
+        branch = branch_name(op, base_sha, attempt)
+        existing = FORGE.find_pr(repo, branch, base)
+        if existing or not FORGE.find_pr(repo, branch, base, state="all"):
+            break
+        attempt += 1
     if existing:
         return dict(operation=op["id"], repo=repo, base=base, branch=branch, url=existing, state="exists")
     wt = WORKSPACE / f"{repo}-worktrees" / branch.replace("/", "-")
