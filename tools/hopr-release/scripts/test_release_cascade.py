@@ -362,7 +362,9 @@ class GitFlow(unittest.TestCase):
         class Forge:
             prs = []
             def git_env(self): return {}
-            def find_pr(self, repo, head, base=None): return None
+            closed = set()
+            def find_pr(self, repo, head, base=None, state="open"):
+                return "https://github.com/hoprnet/hopr-api/pull/7" if state == "all" and head in self.closed else None
             def create_pr(self, repo, head, base, title, body, draft=False):
                 self.prs.append((repo, head, base, title, draft))
                 return "https://github.com/hoprnet/hopr-api/pull/1"
@@ -443,6 +445,19 @@ class GitFlow(unittest.TestCase):
         self.assertNotEqual(result["branch"], old_branch)
         self.assertEqual(result["state"], "opened")
         self.assertTrue(any("cargo update -p hopr-lib" in c for c in self.cmds[0]))   # the new content was applied
+
+    def test_a_branch_whose_earlier_pr_was_closed_is_not_reused_for_the_same_edits(self):
+        op = ApplyOps().op()
+        first = rc.branch_name(op, self.base_sha())
+        self.sh("git", "push", "-q", "origin", f"HEAD:refs/heads/{first}")
+        self.forge.closed.add(first)                            # its PR was closed, the branch is still there
+        result = rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertNotEqual(result["branch"], first)
+        self.assertEqual(result["state"], "opened")
+        self.assertEqual(self.forge.prs[0][1], result["branch"])
+        self.forge.closed.add(result["branch"])                 # closed again: a third attempt differs from both
+        third = rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertNotIn(third["branch"], {first, result["branch"]})
 
     def test_an_existing_open_pr_is_reported_and_nothing_is_pushed_again(self):
         self.forge.find_pr = lambda repo, head, base=None: "https://github.com/hoprnet/hopr-api/pull/9"
