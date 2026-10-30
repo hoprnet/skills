@@ -144,13 +144,24 @@ rendering.
    limit, ends the run with state `paused`. A pin whose crate has a published version becomes a
    version requirement (one edit per line), and its git revision is no longer moved. Inline pins
    (`k = { git = ... }`) and table pins (`[dependencies.k]`) are both edited.
-10. **Open the PRs.** `--execute-no-release` opens a PR for each ready repin or final
+10. **Stale published crates and own requirements.** A crate whose head version is on crates.io
+   is released again when the requirements of that published version do not admit the version a
+   dependency gets in this run. The bump level follows item 8. A bump also edits the repo's own
+   requirements on the bumped crate, in the workspace root and in member manifests.
+11. **Repos below a plan repo.** The git pins of every plan repo are followed (also
+   dev-dependencies, such as `hopli` under `blokli-client`). A repo that depends on a changed
+   crate gets a `repin` when a requirement lags. The pinning repo waits for it and refreshes its
+   lock with `cargo update -p <git spec>`. Lock-only updates are not planned for these repos.
+   The start repo's own stale published crates are bumped in its final repin.
+12. **Open the PRs.** `--execute-no-release` opens a PR for each ready repin or final
    operation, without releasing: it creates a branch in a git worktree
    (`<workspace>/<repo>-worktrees/`), edits `Cargo.toml`, refreshes `Cargo.lock` with cargo
    (inside `nix develop` when the repo has a flake and nix is installed, so the hooks run; on a
    machine with only cargo and git it runs them directly), commits, pushes and
    opens the PR. It never merges. A branch name is a hash of everything the PR holds (edits, version bumps, lock updates, the git revision move and the base commit), so a re-run finds
-   the open PR. `--execute` releases first, then does the same.
+   the open PR. `--execute` releases first, then does the same. A new PR closes the script's own earlier
+   open PRs of the same kind on the same base (`chore/release-cascade-<kind>-*`), with a comment that links
+   the new one.
 
 ### Output
 

@@ -113,6 +113,7 @@ DEP_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "hopr-release" / "crates-repository.json"
 WORKSPACE = Path.cwd()
 SCHEMA = "hopr-release-cascade/v2"
+MAX_STATE_FAILURES = 5  # failed PR state reads in a row before the wait gives up
 FORGE = None  # GhForge or ApiForge, chosen in main()
 RESUME_FLAGS = ""  # flags the resume command repeats, set in main()
 
@@ -194,8 +195,8 @@ class Throttle:
 CRATES_THROTTLE = Throttle(1.0)  # crates.io asks for at most one API request per second
 
 
-def crates_io(name, version=None):
-    url = f"https://crates.io/api/v1/crates/{name}" + (f"/{version}" if version else "")
+def crates_io(name, version=None, sub=""):
+    url = f"https://crates.io/api/v1/crates/{name}" + (f"/{version}" if version else "") + (f"/{sub}" if sub else "")
     CRATES_THROTTLE.wait()
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=20) as r:
@@ -330,6 +331,12 @@ def hard_needs(entries, own, releasing, published=published_versions):
             if not any(admits(e["req"], v) for v in cache[c]):
                 out.add(c)
     return sorted(out)
+
+
+def published_requirements(crate, version, fetch=None):
+    """[(dependency, requirement)] of a published version, dev-dependencies left out."""
+    d = (fetch or crates_io)(crate, version, "dependencies")
+    return [(r["crate_id"], r["req"]) for r in (d or {"dependencies": []})["dependencies"] if r["kind"] != "dev"]
 
 
 def all_versions(crate):
@@ -538,7 +545,8 @@ def build_plan(start_repo, start_branch, planned=None):
             die(f"{repo}@{b}: crates.io lists {repo} as the repository of {miss}, but the branch has no such package")
         plan[(repo, b)] = dict(repo=repo, branch=b, crates=sorted(crates), head={c: head[c] for c in crates},
                                files={c: pk[c]["file"] for c in crates}, manifests={c: pk[c]["manifest"] for c in crates},
-                               inherits=inherited_keys(ms), entries=dep_entries(ms), workflow=release_workflow(repo, b))
+                               inherits=inherited_keys(ms), entries=dep_entries(ms), workflow=release_workflow(repo, b),
+                               pins=git_pins(ms), pin_groups=group_git_pins(git_pins(ms), {}, rev_branch=branch_of_rev))
     # order: a repo comes after every repo whose crates it requires, read from the branch heads
     crate_step = {c: k for k, s in plan.items() for c in s["crates"]}
     after = {k: {crate_step[e["crate"]] for e in s["entries"] if e["crate"] in crate_step} - {k} for k, s in plan.items()}
@@ -565,7 +573,8 @@ def build_plan(start_repo, start_branch, planned=None):
         target.update(cls["stand_in"])
         s["gaps"] = gaps(s["entries"], target, owned)
         # a published crate whose requirements lag must be bumped and released again, also next to an unpublished sibling
-        pb = plan_bumps(s, all_versions, lambda dep, key: reexports_dep(s["repo"], f"origin/{s['branch']}", dep, key))
+        pb = plan_bumps(s, all_versions, lambda dep, key: reexports_dep(s["repo"], f"origin/{s['branch']}", dep, key),
+                        published_reqs=published_requirements, target=target)
         s["todo"], s["bump_crates"], s["bump_info"], s["release_versions"] = pb["todo"], pb["bump_crates"], pb["bump_info"], pb["release_versions"]
         s["republish"] = bool(s["bump_crates"])
         s["hard_requires"] = hard_needs(s["entries"], set(s["crates"]), releasing)
@@ -604,8 +613,46 @@ def build_plan(start_repo, start_branch, planned=None):
             git_updates.append(dict(repo=g["repo"], branch=g["branch"], crates=g["crates"], locked=g["locked"][:9], head=head[:9],
                                     edits=rev_edits,
                                     specs={c: f"{git_sources[c][0]}#{c}@{pinned[c]}" for c in g["crates"] if c in git_sources and c in pinned}))
+    # the start repo's own published crates: stale ones get a version bump in the final repin
+    start_pk = {c: i for c, i in packages(start_ms).items() if published_versions(c)}
+    start_step = None
+    if start_pk:
+        heads = {c: i["version"] for c, i in start_pk.items()}
+        ss = dict(head=heads, todo={c: v for c, v in heads.items() if not is_published(c, v)}, gaps=gaps(start_entries, target, owned),
+                  files={c: i["file"] for c, i in start_pk.items()}, manifests={c: i["manifest"] for c, i in start_pk.items()},
+                  inherits=inherited_keys(start_ms), entries=start_entries)
+        ss.update(plan_bumps(ss, all_versions, lambda dep, key: reexports_dep(start_repo, f"origin/{start_branch}", dep, key),
+                             published_reqs=published_requirements, target=target))
+        start_step = ss if ss["bump_crates"] else None
+    # repos under a plan repo that depend on a changed crate (hopli, pinned by blokli-client for its tests)
+    in_plan = {(x["repo"], x["branch"]) for x in steps} | {(start_repo, start_branch)}
+    nodes = pin_closure([x["pin_groups"] for x in steps] + [pin_groups], in_plan)
+    changed = releasing | {c for c, (_, v) in owned.items() if c in target and vkey(target[c]) > vkey(v)}
+    seen = {(u["repo"], u["branch"]) for u in upstream}
+    hit = affected_repos(nodes, changed) - seen
+    dependents = []
+    for k in sorted(hit):
+        n = nodes[k]  # only requirements matter: cargo ignores a dependency's own Cargo.lock, so no lock updates here
+        dependents.append(dict(repo=k[0], branch=k[1], gaps=gaps(n["entries"], target, owned), lock_updates=[],
+                               requires=sorted(j for j in hit if j != k and nodes[j]["crates"] & n["deps"])))
+    for x in steps:
+        x["git_updates"] = []
+        for g in x["pin_groups"]:
+            if (g["repo"], g["branch"]) not in hit:
+                continue
+            code, text = run("git", "-C", str(WORKSPACE / x["repo"]), "show", f"origin/{x['branch']}:Cargo.lock", check=False)
+            revs = git_revs(text, g["crates"], g["repo"], g["branch"]) if code == 0 else {}
+            locked = next(iter(revs.values()), "")
+            head = git(g["repo"], "rev-parse", f"origin/{g['branch']}").strip()
+            # a `rev` pin moves to the head of the branch; a branch pin moves with `cargo update -p`
+            rev_edits = [dict(file=p["file"], line=line_of(x["repo"], f"origin/{x['branch']}", p["file"], p["key"], p.get("table")),
+                              key=p["key"], crate=p["crate"], current=p["ref"], required=head, swap="git_rev")
+                         for p in x["pins"] if p["crate"] in g["crates"] and p["ref"].startswith("rev ")] if locked != head else []
+            x["git_updates"].append(dict(repo=g["repo"], branch=g["branch"], crates=g["crates"], locked=locked[:9], head=head[:9],
+                                         edits=rev_edits, stale=bool(locked) and locked != head and lock_is_stale(g["repo"], locked, target, owned),
+                                         specs=git_specs(text, g["crates"], g["repo"], g["branch"]) if code == 0 else {}))
     return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned), pins=pins,
-                upstream=upstream, git_updates=git_updates, later_heads=later_heads,
+                dependents=dependents, start_step=start_step, upstream=upstream, git_updates=git_updates, later_heads=later_heads,
                 patched=patch_pins(start_ms), bump_heads=bump_heads,
                 repin=gaps(start_entries, target, owned), locked={c: v for c, (_, v) in owned.items()}, target=target)
 
@@ -650,13 +697,22 @@ def classify_heads(s, planned, bump_only_fn, published_of):
     return dict(todo=todo, bump_heads=bump_heads, later_heads=later_heads, stand_in=stand_in)
 
 
-def plan_bumps(s, versions_of, reexports):
+def plan_bumps(s, versions_of, reexports, published_reqs=None, target=None):
     """Which crates of a step need a new version, and which. A published crate with a stale requirement is bumped; a
     crate that re-exports a dependency whose version moved to another compatibility line gets the next breaking
-    version (its public API changes with it), not a patch. -> {todo, bump_crates, release_versions, bump_info}"""
+    version (its public API changes with it), not a patch. A published head whose published requirements do not admit
+    the version `target` holds for a dependency is bumped too: main may require the new versions while the release on
+    crates.io still requires the old ones. -> {todo, bump_crates, release_versions, bump_info}"""
     todo, info = dict(s["todo"]), {}
     manifests_, inherits = s.get("manifests", s["files"]), s.get("inherits", {})
     bump = set(crates_with_gaps([c for c in s["head"] if c not in todo], manifests_, s["gaps"], inherits))
+    stale = {}
+    for c, v in s["head"].items():
+        if published_reqs and target and c not in todo:
+            bad = [(d, r) for d, r in published_reqs(c, v) if d in target and not admits(r, target[d])]
+            if bad:
+                stale[c] = bad
+    bump |= set(stale)
     breaking = [g for g in s["gaps"] if is_breaking(g["req"], g["want"]) and reexports(g["crate"], g["key"])]
     proposed = {}
     for c in crates_with_gaps(sorted(s["head"]), manifests_, breaking, inherits):
@@ -669,9 +725,18 @@ def plan_bumps(s, versions_of, reexports):
         proposed[c] = bump_breaking(base)
         deps = ", ".join(f"{g['crate']} {g['req']} -> {g['want']}" for g in breaking)
         info[c] = dict(level="major" if breaking_line(base)[0] > 0 else "minor", reason=f"re-exports a dependency that moves line: {deps}")
+    for c, bad in stale.items():
+        keys = lambda d: {e["key"] for e in s.get("entries", []) if e["crate"] == d} | {d}   # `package =` renames
+        moved = [(d, r) for d, r in bad if is_breaking(r, target[d]) and any(reexports(d, k) for k in keys(d))]
+        if moved and c not in proposed:
+            base = max(s["head"][c], max(versions_of(c), key=vkey, default=s["head"][c]), key=vkey)
+            proposed[c] = bump_breaking(base)
+            info[c] = dict(level="major" if breaking_line(base)[0] > 0 else "minor",
+                           reason="re-exports a dependency that moves line: " + ", ".join(f"{d} {r} -> {target[d]}" for d, r in moved))
     release = {**todo, **{c: proposed.get(c) or next_free_patch(versions_of(c), s["head"][c]) for c in sorted(bump)}}
     for c in bump:
-        info.setdefault(c, dict(level="patch", reason="requirements raised to the released versions"))
+        info.setdefault(c, dict(level="patch", reason="the published version requires " + ", ".join(f"{d} {r}" for d, r in stale[c])
+                                if c in stale else "requirements raised to the released versions"))
     return dict(todo=todo, bump_crates=sorted(bump), release_versions=release, bump_info=info)
 
 
@@ -715,6 +780,85 @@ def locked_org_versions(repo, ref, owned):
         if p["name"] in owned and vkey(p["version"]) > vkey(out.get(p["name"], "0.0.0")):
             out[p["name"]] = p["version"]
     return out
+
+
+def affected_repos(nodes, changed):
+    """Keys of the repos that depend on a changed crate, directly or through the crates of another affected repo.
+    nodes: {(repo, branch): dict(crates=set, deps=set)}; changed: crate names."""
+    hit, moved, grew = set(), set(changed), True
+    while grew:
+        grew = False
+        for k, n in nodes.items():
+            if k not in hit and n["deps"] & moved:
+                hit.add(k)
+                moved |= n["crates"]
+                grew = True
+    return hit
+
+
+def pin_closure(groups_per_repo, in_plan):
+    """The org repos the plan repos pin by git, and those repos' own pins in turn, which the plan does not hold: dependency
+    entries and git pins make up `deps`. -> {(repo, branch): dict(crates, deps, entries)}"""
+    nodes, queue = {}, list(groups_per_repo)
+    while queue:
+        for g in queue.pop():
+            k = (g["repo"], g["branch"])
+            if k in in_plan or k in nodes:
+                continue
+            try:
+                ensure(g["repo"])
+            except Stop:
+                continue
+            if not has_ref(g["repo"], g["branch"]):
+                continue
+            ms = manifests(g["repo"], f"origin/{g['branch']}")
+            entries = dep_entries(ms)
+            nodes[k] = dict(crates={m["package"]["name"] for m in ms.values() if "package" in m}, entries=entries,
+                            deps={e["crate"] for e in entries} | {x["crate"] for x in git_pins(ms)})
+            queue.append(group_git_pins(git_pins(ms), {}, rev_branch=branch_of_rev))
+    return nodes
+
+
+def git_copies(lock_text, crates, repo, branch):
+    """{crate: (url, version, revision)} of the copy of each crate that a Cargo.lock holds from the git repo `repo` on
+    `branch`. A source that names another branch is another copy; a `rev` or `tag` source names no branch and matches.
+    Two copies for one crate are an error: a `cargo update -p` could move the wrong one."""
+    found = {}
+    for p in tomllib.loads(lock_text).get("package", []):
+        m = re.match(r"git\+([^?#]+)(?:\?([^#]*))?#(\w+)", p.get("source", ""))
+        if not m or p["name"] not in crates:
+            continue
+        url, query, rev = m.groups()
+        owner = re.search(r"github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+        if not owner or (owner.group(1).lower(), owner.group(2).lower()) != (ORG, repo.lower()):
+            continue
+        if dict(urllib.parse.parse_qsl(query or "")).get("branch", branch) != branch:
+            continue
+        found.setdefault(p["name"], []).append((url, p["version"], rev))
+    for name, copies in found.items():
+        if len(copies) > 1:
+            die(f"the lock holds {len(copies)} git copies of {name} from {repo}@{branch}: "
+                + ", ".join(f"{v} ({r[:9]})" for _, v, r in copies) + "; name one of them by hand")
+    return {name: copies[0] for name, copies in found.items()}
+
+
+def git_specs(lock_text, crates, repo, branch):
+    """{crate: cargo package spec} of the git copies in a Cargo.lock, so `cargo update -p` names the git copy."""
+    return {c: f"{url}#{c}@{version}" for c, (url, version, _) in git_copies(lock_text, crates, repo, branch).items()}
+
+
+def git_revs(lock_text, crates, repo, branch):
+    """{crate: locked git revision} of the git copies in a Cargo.lock."""
+    return {c: rev for c, (_, _, rev) in git_copies(lock_text, crates, repo, branch).items()}
+
+
+def lock_is_stale(repo, locked, target, owned):
+    """True when the manifests of the locked commit of a git dependency hold requirements that do not admit the versions
+    of the run: its lock entry must move to a newer commit. An unreadable commit counts as stale."""
+    try:
+        return bool(gaps(dep_entries(manifests(repo, locked)), target, owned))
+    except Stop:
+        return True
 
 
 def gaps(entries, target, owned):
@@ -770,6 +914,14 @@ class GhForge:
         rows = json.loads(run("gh", "pr", "list", "--repo", f"{ORG}/{repo}", "--head", head, *(["--base", base] if base else []),
                               "--state", state, "--json", "url")[1] or "[]")
         return rows[0]["url"] if rows else None
+
+    def list_open_prs(self, repo, base):
+        rows = json.loads(run("gh", "pr", "list", "--repo", f"{ORG}/{repo}", "--base", base, "--state", "open", "--limit", "1000",
+                              "--json", "number,url,headRefName,body")[1] or "[]")
+        return [dict(number=r["number"], url=r["url"], head=r["headRefName"], body=r.get("body") or "") for r in rows]
+
+    def close_pr(self, repo, number, comment):
+        run("gh", "pr", "close", str(number), "--repo", f"{ORG}/{repo}", "--comment", comment)
 
     def dispatch(self, repo, workflow, ref, inputs):
         """Triggers the workflow. Returns the run id when gh prints the run URL (gh 2.87+), else None."""
@@ -912,6 +1064,20 @@ class ApiForge:
         rows = self._call("GET", f"/repos/{ORG}/{repo}/pulls?{q}")
         return rows[0]["html_url"] if rows else None
 
+    def list_open_prs(self, repo, base):
+        out, page = [], 1
+        while True:  # a page holds at most 100 PRs: read on until a short page
+            rows = self._call("GET", f"/repos/{ORG}/{repo}/pulls?state=open&per_page=100&page={page}&base={urllib.parse.quote(base, safe='')}")
+            out += [dict(number=r["number"], url=r["html_url"], head=r["head"]["ref"], body=r.get("body") or "") for r in rows]
+            if len(rows) < 100:
+                return out
+            page += 1
+
+    def close_pr(self, repo, number, comment):
+        # close first: a failed close then leaves no comment that claims it, and a rerun comments once
+        self._call("PATCH", f"/repos/{ORG}/{repo}/pulls/{number}", {"state": "closed"})
+        self._call("POST", f"/repos/{ORG}/{repo}/issues/{number}/comments", {"body": comment}, ok=(201,))
+
     def dispatch(self, repo, workflow, ref, inputs):
         """Triggers the workflow. Returns the run id when the API reports it (return_run_details), else None."""
         url = f"{self.API}/repos/{ORG}/{repo}/actions/workflows/{workflow}/dispatches"
@@ -973,6 +1139,12 @@ class AnonForge:
 
     def create_pr(self, *a, **kw):
         self._need("opening a pull request")
+
+    def list_open_prs(self, *a, **kw):
+        self._need("opening a pull request")
+
+    def close_pr(self, *a, **kw):
+        self._need("closing a superseded pull request")
 
 
 def make_forge(force=None, token_cmd=None, token_file=None):
@@ -1048,6 +1220,19 @@ def resume_command(start):
     return f"python3 {Path(sys.argv[0]).resolve()} --from {start[0]}@{start[1]}" + (f" {RESUME_FLAGS}" if RESUME_FLAGS else "") + " --execute"
 
 
+def bump_details(s, gap_list):
+    """(version bumps, requirement edits) for the crates of a step that get a new version: the bumps, and the repo's own
+    requirements on those crates that do not admit the new version and are not among `gap_list` already."""
+    bumps = [dict(crate=c, file=s["files"][c], current=s["head"][c], suggested=s["release_versions"][c],
+                  **s.get("bump_info", {}).get(c, dict(level="patch", reason="requirements raised to the released versions")))
+             for c in s.get("bump_crates", [])]
+    seen = {(g["file"], g.get("table"), g["key"]) for g in gap_list}
+    own = [dict(e, want=s["release_versions"][e["crate"]]) for e in s.get("entries", [])
+           if e["crate"] in s.get("bump_crates", []) and not admits(e["req"], s["release_versions"][e["crate"]])
+           and (e["file"], e.get("table"), e["key"]) not in seen]
+    return bumps, own
+
+
 def operations(plan):
     """Every operation still to do, leaf first, with the operations each one waits for."""
     ops, rel = [], {}  # rel: crate -> id of the operation that releases it
@@ -1057,14 +1242,30 @@ def operations(plan):
         ops.append(op)
         return op
 
+    # a repo under a plan repo (hopli): its repin comes first, because the plan repo pins it and refreshes its lock after
+    dep_ops, todo = {}, list(plan.get("dependents", []))
+    while todo:
+        d = next((x for x in todo if not any((r, b) in {(y["repo"], y["branch"]) for y in todo if y is not x}
+                                             for r, b in x["requires"])), todo[0])
+        todo.remove(d)
+        ed = edits(d["repo"], d["branch"], d["gaps"])
+        if ed or d["lock_updates"]:
+            dep_ops[(d["repo"], d["branch"])] = (new("repin", repo=d["repo"], branch=d["branch"], edits=ed, lock_updates=d["lock_updates"],
+                                                     version_bumps=[], depends_on=[],
+                                                     description=f"update {d['repo']}@{d['branch']}, which a repo of the plan depends on, to the released versions",
+                                                     then="open a PR with these edits and a refreshed Cargo.lock, then merge it"), d)
     for s in plan["steps"]:
         repin = None
-        if s["gaps"]:
-            bumps = [dict(crate=c, file=s["files"][c], current=s["head"][c], suggested=s["release_versions"][c],
-                          **s.get("bump_info", {}).get(c, dict(level="patch", reason="requirements raised to the released versions")))
-                     for c in s.get("bump_crates", [])]
-            repin = new("repin", repo=s["repo"], branch=s["branch"], edits=edits(s["repo"], s["branch"], s["gaps"]),
-                        version_bumps=bumps, depends_on=sorted({rel[g["crate"]] for g in s["gaps"] if g["crate"] in rel}),
+        # a pinned repo with its own repin comes first; one that already merged leaves the lock on the old commit
+        pin_updates = [g for g in s.get("git_updates", []) if (g["repo"], g["branch"]) in dep_ops or g.get("stale")]
+        if s["gaps"] or pin_updates or s.get("bump_crates"):
+            bumps, own = bump_details(s, s["gaps"])  # the repo's own requirements on a bumped crate must admit its new version
+            repin = new("repin", repo=s["repo"], branch=s["branch"],
+                        edits=edits(s["repo"], s["branch"], s["gaps"] + own) + [e for g in pin_updates for e in g.get("edits", [])],
+                        version_bumps=bumps, git_updates=pin_updates,
+                        depends_on=sorted({rel[g["crate"]] for g in s["gaps"] if g["crate"] in rel}
+                                          | {dep_ops[(g["repo"], g["branch"])][0]["id"] for g in pin_updates
+                                             if (g["repo"], g["branch"]) in dep_ops}),
                         description=f"repin {s['repo']}@{s['branch']} to the released versions"
                                     + (" and bump its version" if bumps else ""),
                         then="open a PR with these edits and a refreshed Cargo.lock, then merge it")
@@ -1078,6 +1279,9 @@ def operations(plan):
                      command=(f"gh workflow run {s['workflow']} --repo {ORG}/{s['repo']} --ref {s['branch']} -f release_type=patch"
                               if s["workflow"] else None))
             rel.update({c: op["id"] for c in crates})
+    for k, (op, d) in dep_ops.items():
+        named = {g["crate"] for g in d["gaps"]} | {x["crate"] for x in d["lock_updates"]}
+        op["depends_on"] = sorted({rel[c] for c in named if c in rel} | {dep_ops[r][0]["id"] for r in d["requires"] if r in dep_ops})
     # a repo the start repo pins by git (hoprnet) takes the released versions before the start repo moves to it
     up_ids = []
     for u in plan.get("upstream", []):
@@ -1101,12 +1305,16 @@ def operations(plan):
                         **({"edits": [e for e in g["edits"] if e["crate"] not in swapped]} if "edits" in g else {}))
                    for g in plan.get("git_updates", [])]
     git_updates = [g for g in git_updates if g["crates"]]
-    if plan["repin"] or lock_updates or swaps or git_updates:
+    # the start repo is never released, but its stale published crates are bumped here, so the run that releases them
+    # later needs no second PR
+    start_bumps, start_own = bump_details(plan["start_step"], plan["repin"]) if plan.get("start_step") else ([], [])
+    if plan["repin"] or lock_updates or swaps or git_updates or start_bumps:
         sr, sb = plan["start"]
         named = {g["crate"] for g in plan["repin"]} | {u["crate"] for u in lock_updates}
         rev_edits = [e for g in git_updates for e in g.get("edits", [])]
-        new("final_repin", repo=sr, branch=sb, edits=edits(sr, sb, plan["repin"]) + swaps + rev_edits, lock_updates=lock_updates,
-            git_updates=git_updates, version_bumps=[], depends_on=sorted({rel[c] for c in named if c in rel} | set(up_ids)),
+        new("final_repin", repo=sr, branch=sb, edits=edits(sr, sb, plan["repin"] + start_own) + swaps + rev_edits,
+            lock_updates=lock_updates, git_updates=git_updates, version_bumps=start_bumps,
+            depends_on=sorted({rel[c] for c in named if c in rel} | set(up_ids)),
             description=f"update {sr}@{sb} to the released versions"
                         + (f" (cargo update -p {' -p '.join(u['crate'] for u in lock_updates)})" if lock_updates else "")
                         + (f" and to the current {', '.join(sorted({g['repo'] + '@' + g['branch'] for g in git_updates}))}" if git_updates else ""),
@@ -1118,11 +1326,16 @@ def operations(plan):
                 description=f"swap the git pin of {p['crate']} ({p['ref']}) for a released version",
                 blocked_reason=f"{p['crate']} has no published version >= {p['locked']} on crates.io; release it first, "
                                f"then this pin can become a version requirement")
-    layer = {}
-    for op in ops:  # dependencies come before their dependents in the list
+    layer, by_id = {}, {o["id"]: o for o in ops}
+
+    def layer_of(i):
+        if i not in layer:
+            layer[i] = 1 + max((layer_of(d) for d in by_id[i]["depends_on"]), default=0)
+        return layer[i]
+
+    for op in ops:
         op["status"] = "blocked" if op["kind"] == "pin_swap" else "pending" if op["depends_on"] else "ready"
-        layer[op["id"]] = 1 + max((layer[d] for d in op["depends_on"]), default=0)
-        op["layer"], op["concurrency_group"] = layer[op["id"]], f"layer-{layer[op['id']]}"
+        op["layer"], op["concurrency_group"] = layer_of(op["id"]), f"layer-{layer_of(op['id'])}"
     return ops
 
 
@@ -1299,10 +1512,19 @@ def bump_text(text, b):
     return die(f"{b['file']}: no package version \"{b['current']}\" to bump for {b['crate']}")
 
 
+def line_spec(v):
+    """A partial version that matches every version on the compatibility line of `v` (5.0.0 -> 5, 0.36.1 -> 0.36), so a
+    lock that kept a newer compatible version still matches, and an older major in the same lock does not."""
+    return ".".join(str(x) for x in breaking_line(v))
+
+
 def lock_commands(op):
     cmds = ["cargo metadata --format-version 1 >/dev/null"]  # rewrites the lock for the edited requirements and versions
-    cmds += [f"cargo update -p {c}" for c in dict.fromkeys(e["crate"] for e in op.get("edits", []))]
-    cmds += [f"cargo update -p {u['crate']}@{u['locked']} --precise {u['target']}" for u in op.get("lock_updates", [])]
+    # name@version: a transitive dependency can keep the old major in the lock, and a bare name is then ambiguous
+    cmds += [f"cargo update -p {c}@{line_spec(v)}" for c, v in dict.fromkeys((e["crate"], e["required"]) for e in op.get("edits", []))]
+    # an earlier step (metadata, an edited requirement) may have moved the crate already; the old version is then gone
+    cmds += [f"{{ ! cargo pkgid {u['crate']}@{u['locked']} >/dev/null 2>&1 || cargo update -p {u['crate']}@{u['locked']} --precise {u['target']}; }}"
+             for u in op.get("lock_updates", [])]
     for g in op.get("git_updates", []):  # a crate that also has a registry copy needs its source in the spec
         cmds += [f"cargo update -p {shlex.quote(g.get('specs', {}).get(c, c))}" for c in g["crates"]]
     return list(dict.fromkeys(cmds))
@@ -1373,9 +1595,17 @@ def wait_for_merge(prs, minutes, poll=60, state_of=None, clock=time.monotonic, s
     state_of = state_of or (lambda repo, n: FORGE.pr_state(repo, n))
     deadline = clock() + minutes * 60
     waiting = {pr["url"]: (pr["repo"], pr_number(pr["url"])) for pr in prs}
+    failures = 0
     while True:
         for url, (repo, n) in list(waiting.items()):
-            st = state_of(repo, n)
+            try:
+                st = state_of(repo, n)
+                failures = 0
+            except Stop:  # GitHub answers 5xx now and then; a read that keeps failing ends the wait
+                failures += 1
+                if failures >= MAX_STATE_FAILURES:
+                    raise
+                continue
             if st == "merged":
                 del waiting[url]
             elif st == "closed":
@@ -1393,7 +1623,26 @@ def unexpected_changes(porcelain, allowed):
     return sorted(p for p in paths if p not in set(allowed) | {"Cargo.lock"})
 
 
+def supersede(repo, base, kind, keep, url, start):
+    """Close the script's own earlier open PRs of this kind on this base, other than the branch `keep`: a changed plan
+    gives a new branch, and the old PR would stay open beside it. PRs the script did not open, and PRs of another start
+    repo's run (named in the PR body by `pr_text`), are left alone. -> the URLs closed"""
+    prefix, marker = f"chore/release-cascade-{kind}-", f"release cascade from {start[0]}@{start[1]}."
+    old = [p for p in FORGE.list_open_prs(repo, base)
+           if p["head"].startswith(prefix) and p["head"] != keep and marker in (p.get("body") or "")]
+    for p in old:
+        FORGE.close_pr(repo, p["number"], f"Superseded by {url}: the plan changed after this PR was opened. Closed by release-cascade.py.")
+    return [p["url"] for p in old]
+
+
 def apply_op(op, start, shell=None):
+    """apply_op_new, then close the PRs it supersedes."""
+    result = apply_op_new(op, start, shell)
+    result["superseded"] = supersede(op["repo"], op["branch"], op["kind"], result["branch"], result["url"], start)
+    return result
+
+
+def apply_op_new(op, start, shell=None):
     """Apply a repin or final repin in a new worktree branch, commit, push, open a PR. Never merges."""
     shell = shell or in_shell
     repo, base = op["repo"], op["branch"]

@@ -14,7 +14,9 @@ description: >
   "propagate/backport the hoprnet change", "repin hoprd/edge-client/gnosis_vpn", "flip the
   pin to the release branch", "cut a hopr release", "release the v4 or v5 line", "release
   cascade", "release-cascade.py", "what needs to be released for edge-client/hoprd", "bump
-  hopr-lib", "impostor commit", or a "[patch.crates-io]" git dependency on a hopr crate.
+  hopr-lib", "impostor commit", a "[patch.crates-io]" git dependency on a hopr crate, a release
+  job whose version bump did not land, a "disabled due to previous publish" dry-run failure, or a
+  repin PR that fails to compile after a hopr-types or hopr-api major bump.
   Not for the general git PR workflow (use git-workflow) or Rust code quality (use
   rust-engineer).
 ---
@@ -71,6 +73,11 @@ final lock update. The detail is in "Publishing the crates.io crates, leaf to ro
    `git` and `cargo` (or `nix`, which provides them).
 3. Choose the start repo and branch. The default branch is the v5 line
    (`edge-client@main`). `release/4.1` is the v4 line (`edge-client@release/4.1`).
+4. Start at the repo furthest downstream (`edge-client` or `hoprd`), never at a repo in the
+   middle such as `hopr-impls`. A run from `hopr-impls` treats it as the start repo, which is
+   never released, so it gets a repin without a release. The run from `edge-client` then needs a
+   second PR for the same repo (hopr-impls#68, then #69). If you must start in the middle, the
+   start repo's PR now carries its own version bumps, so a later run only releases.
 
 **Commands** (all take `--from REPO@BRANCH`)
 
@@ -95,6 +102,10 @@ access, `--token-cmd` and `--token-file` give the token, `--workspace DIR` sets 
 4. Run again. The start repo's PR opens only after the `hoprnet` PR is merged.
 5. Repeat the dry run until `state` is `complete`.
 
+A run releases only at its start. With `--wait-merge` it waits for its PRs, re-plans, opens the
+PRs that were waiting and exits, even when a release is now `ready`. After each merge, start a
+new `--execute` run to publish the next layer. Expect one run per layer of the plan.
+
 **Read the report**
 
 - `state` says where the cascade stands: `release_ready`, `repin_required`,
@@ -118,6 +129,25 @@ access, `--token-cmd` and `--token-file` give the token, `--workspace DIR` sets 
   version requirement only when crates.io has a version at or above the locked one.
 - A crate that re-exports a dependency whose version moves to another compatibility line gets
   a proposed major bump (minor for 0.x), not a patch. Review the number in the repin PR.
+- A crate whose head version is on crates.io is still released again when its published
+  requirements do not admit the version the run releases for a dependency (main changed the
+  requirement without a version bump). The repin operation then lists the new version in
+  `version_bumps`, and `crates_to_change` marks the release `republish`; the check reads the
+  dependencies API of the published version.
+- A bump also raises the repo's own requirements on the bumped crate (workspace and member
+  manifests). Cargo fails without that.
+- The walk also covers repos that a plan repo pins by git or by dev-dependency (`hopli` under
+  `blokli-client`). They get a repin when a requirement lags, and the pinning repo waits for it
+  and refreshes its lock. A lock-only update in such a repo is not planned: cargo ignores a
+  dependency's own `Cargo.lock`. The pinning repo also gets a repin when its locked commit of
+  such a repo still lacks the fix, after that repo's own PR merged (a `rev` pin is edited to
+  the branch head). A pin from one repo below a plan repo to another is not edited.
+- The start repo is never released, but its stale published crates are bumped in its own repin PR.
+- A new repin PR closes the script's own earlier open PRs of the same kind on the same base,
+  named `chore/release-cascade-<kind>-*` and opened for the same start repo (named in the PR
+  body). Other PRs, and the PRs of another start repo's run, stay open.
+- The wait for a merge retries a failed GitHub read (HTTP 5xx) and ends the run only after five
+  failures in a row.
 - The script never merges, never tags and never runs `cargo publish`. Re-running is safe: an
   open PR is found and not opened twice.
 
@@ -142,6 +172,21 @@ load-bearing ones:
   "Publishing the crates.io crates, leaf to root" in the procedure); the job after it
   creates the Release/tag and bumps the version.
 
+- **A release job can finish without its version bump.** The `Close release` job pushes
+  `ci: Bump to version X` after the publish. If that push fails (hopr-utilities 0.18.0:
+  `No .pre-commit-config.yaml file was found`), `main` keeps the published version and every PR
+  fails `Build dry-run library` with `disabled due to previous publish`. Set
+  `PRE_COMMIT_ALLOW_NO_CONFIG: "1"` on the `release-version` step, as `blokli-client` does, and
+  push the bump by hand with that exact subject.
+- **A published release can carry a third-party version the consumers cannot take.**
+  hopr-utilities 0.18.0 shipped `multiaddr` 0.19 and `libp2p-identity` 0.3 while hopr-impls
+  uses libp2p 0.56 (0.18 and 0.2). The `Multiaddr` types then differ and the repin PR fails
+  with E0308. The script does not see third-party crates. Run `cargo tree -d` on the consumer
+  before you release, and read the first repin PR build as the check.
+- **A major bump of `hopr-types` or `hopr-api` breaks code, not only `Cargo.toml`.** Expect new
+  enum variants in exhaustive matches, changed function signatures and moved types. Read
+  [references/gotchas.md](references/gotchas.md) for the cases seen.
+
 ## Governance
 
 Repinning and release work is the canonical "babysit until green, merge nothing until
@@ -150,6 +195,13 @@ cascade, but gate every merge, publish, and tag on explicit approval. Branching,
 committing, and PRs follow git-workflow; the never-merge/never-tag-without-
 in-the-moment-approval rule holds here especially, because a premature merge on one
 line forces the whole cascade to be redone.
+
+The script opens every PR as the person who runs it, and GitHub does not let an author approve
+their own PR. Each repin PR therefore needs a second reviewer. Set auto-merge only when told
+to, with `gh pr merge N --auto --squash`, and not on a draft (`gh pr ready N` first). A PR
+that is `BLOCKED` with a green CI waits for that approval. Before you push to a repin PR, run
+the repo's own CI recipe with the exact feature set it uses (`just` recipes in the repo).
+`--all-features` is not that set: mutually exclusive features make it fail on its own.
 
 ## Related skills
 
