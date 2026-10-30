@@ -70,6 +70,12 @@ this: dev-dependencies and git pins of a step repo are not in that lock. The scr
 the git pins of every plan repo, repins the repos it finds, and makes the pinning repo wait for
 them. Cargo ignores a dependency's own `Cargo.lock`, so only requirement gaps count.
 
+Once that repo's repin PR is merged its operation is gone, and the pinning repo's lock still
+holds the old commit (`hopli` 590adcf, which requires `hopr-types` 4.1.0). The script reads the
+manifests of the locked commit: when they still lag, the pinning repo gets a repin that moves
+the lock (a `rev` pin: the edit to the branch head). A pin from one repo below a plan repo to
+another such repo is not edited; no such case has come up.
+
 ## Start at the repo furthest downstream
 
 A run from `hopr-impls` treats it as the start repo: a final repin without a release or bumps.
@@ -127,8 +133,12 @@ Check for an open migration PR before you change downstream code.
 ## `cargo update -p name` is ambiguous with two versions in the lock
 
 A transitive dependency can keep the old major in `Cargo.lock`, and `cargo update -p hopr-types`
-then fails with `specification is ambiguous`. The script uses `name@version`. A `--precise` update
-runs only while the old version is still locked: an earlier step can have moved it.
+then fails with `specification is ambiguous`. The script names the compatibility line:
+`cargo update -p hopr-types@5` (a partial version matches 5.0.0 and a locked 5.0.1, and not a
+locked 4.1.0). An exact `@5.0.0` fails when the lock kept a newer compatible version. A
+`--precise` update runs only while the old version is still locked: an earlier step can have
+moved it. A git copy is named by its source (`https://github.com/hoprnet/hopli#hopli@0.20.2`),
+chosen by repo and branch. Two copies of one crate from the same repo and branch stop the run.
 
 ## Run the repo's own CI command, not a wider one
 
@@ -141,6 +151,8 @@ allocator features, and hopr-utilities has benches with lints CI does not run.
 The script opens PRs as the user who runs it, and GitHub rejects the author's own approval
 (`Can not approve your own pull request`). Auto-merge (`gh pr merge N --auto --squash`) cannot
 start on a draft: `gh pr ready N` first. The script closes its own earlier PRs when a changed
-plan gives a new branch (hopr-strategy#126, replaced by #127). A `gh api` read can answer with
+plan gives a new branch (hopr-strategy#126, replaced by #127), only those of the same kind, on
+the same base and for the same start repo: the run for `hoprd` must not close the PRs the run for
+`edge-client` still needs. A `gh api` read can answer with
 HTTP 5xx: the merge wait retries it.
 

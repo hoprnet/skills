@@ -3,6 +3,7 @@
   python3 -m unittest tools/hopr-release/scripts/test_release_cascade.py
 """
 import importlib.util
+import re
 import unittest
 from pathlib import Path
 
@@ -300,7 +301,7 @@ class ApplyOps(unittest.TestCase):
     def test_lock_commands(self):
         cmds = rc.lock_commands(self.op(lock_updates=[dict(crate="hopr-utilities", locked="0.9.3", target="0.9.4")]))
         self.assertEqual(cmds[0], "cargo metadata --format-version 1 >/dev/null")
-        self.assertTrue(any(c.startswith("cargo update -p hopr-types@") for c in cmds))
+        self.assertIn("cargo update -p hopr-types@5", cmds)           # the line of the required 5.0.0, so a locked 5.0.1 still matches
         self.assertIn("{ ! cargo pkgid hopr-utilities@0.9.3 >/dev/null 2>&1 || cargo update -p hopr-utilities@0.9.3 --precise 0.9.4; }", cmds)
 
     def test_branch_name_is_stable_and_changes_with_the_edits(self):
@@ -464,8 +465,9 @@ class GitFlow(unittest.TestCase):
         third = rc.apply_op(op, ("edge-client", "release/4.1"), shell=self.stub_shell)
         self.assertNotIn(third["branch"], {first, result["branch"]})
 
-    def open_pr(self, number, head):
-        return dict(number=number, head=head, url=f"https://github.com/hoprnet/hopr-api/pull/{number}")
+    def open_pr(self, number, head, start="edge-client@release/4.1"):
+        return dict(number=number, head=head, url=f"https://github.com/hoprnet/hopr-api/pull/{number}",
+                    body=f"Part of the release cascade from {start}. Merge after the releases below are on crates.io.")
 
     def test_a_new_pr_closes_the_scripts_earlier_open_prs_of_the_same_kind_on_the_same_base(self):
         self.forge.open_prs = [self.open_pr(5, "chore/release-cascade-repin-aaaa1111"),
@@ -475,6 +477,12 @@ class GitFlow(unittest.TestCase):
         self.assertEqual([(r, n) for r, n, _ in self.forge.closed_prs], [("hopr-api", 5)])
         self.assertIn("https://github.com/hoprnet/hopr-api/pull/1", self.forge.closed_prs[0][2])
         self.assertEqual(result["superseded"], ["https://github.com/hoprnet/hopr-api/pull/5"])
+
+    def test_a_pr_of_another_start_repos_run_is_not_closed(self):
+        self.forge.open_prs = [self.open_pr(5, "chore/release-cascade-repin-aaaa1111", start="hoprd@main"),
+                               self.open_pr(6, "chore/release-cascade-repin-bbbb2222")]
+        rc.apply_op(ApplyOps().op(), ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertEqual([n for _, n, _ in self.forge.closed_prs], [6])
 
     def test_the_open_pr_of_the_current_branch_is_not_closed(self):
         branch = rc.branch_name(ApplyOps().op(), self.base_sha())
@@ -558,7 +566,7 @@ class PinOperations(unittest.TestCase):
         self.assertEqual((e["crate"], e["required"], e["swap"], e["line"]), ("hopr-lib", "5.0.0", "git_to_version", 97))
         self.assertIn("git https://github.com/hoprnet/hoprnet branch master", e["current"])
         self.assertEqual(ops[0]["status"], "ready")
-        self.assertIn("cargo update -p hopr-lib@5.0.0", rc.lock_commands(ops[0]))
+        self.assertIn("cargo update -p hopr-lib@5", rc.lock_commands(ops[0]))
 
     def test_a_pin_with_no_published_version_is_a_blocked_operation_with_the_reason(self):
         ops = rc.operations(plan([], pins=[self.pin(None)]))
@@ -1285,29 +1293,52 @@ class ReadyPullRequests(unittest.TestCase):
 
 
 class ClosingPullRequests(unittest.TestCase):
-    def test_gh_lists_open_prs_of_a_base_and_closes_one_with_a_comment(self):
+    def test_gh_lists_open_prs_of_a_base_with_their_bodies_and_closes_one_with_a_comment(self):
         calls = []
         saved = rc.run
-        rc.run = lambda *a, **kw: calls.append(a) or (0, '[{"number": 5, "url": "https://github.com/hoprnet/x/pull/5", "headRefName": "chore/b"}]')
+        rc.run = lambda *a, **kw: calls.append(a) or (0, '[{"number": 5, "url": "https://github.com/hoprnet/x/pull/5", "headRefName": "chore/b", "body": "text"}]')
         try:
             got = rc.GhForge().list_open_prs("x", "main")
             rc.GhForge().close_pr("x", 5, "Superseded by u")
         finally:
             rc.run = saved
-        self.assertEqual(got, [dict(number=5, url="https://github.com/hoprnet/x/pull/5", head="chore/b")])
+        self.assertEqual(got, [dict(number=5, url="https://github.com/hoprnet/x/pull/5", head="chore/b", body="text")])
         self.assertIn("main", calls[0])
+        self.assertIn("number,url,headRefName,body", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--limit") + 1], "1000")      # not just the newest 100
         self.assertEqual(calls[1][:3], ("gh", "pr", "close"))
         self.assertIn("Superseded by u", calls[1])
 
-    def test_the_api_lists_open_prs_of_a_base_and_closes_one_with_a_comment(self):
-        http = FakeHttp({("GET", "/pulls"): (200, [{"number": 5, "html_url": "https://github.com/hoprnet/x/pull/5", "head": {"ref": "chore/b"}}]),
+    def test_the_api_lists_open_prs_of_a_base_and_closes_one_before_it_comments(self):
+        http = FakeHttp({("GET", "/pulls"): (200, [{"number": 5, "html_url": "https://github.com/hoprnet/x/pull/5",
+                                                    "head": {"ref": "chore/b"}, "body": "text"}]),
                          ("POST", "/issues/5/comments"): (201, {}), ("PATCH", "/pulls/5"): (200, {})})
         forge = rc.ApiForge("t", http)
-        self.assertEqual(forge.list_open_prs("x", "release/4.1"), [dict(number=5, url="https://github.com/hoprnet/x/pull/5", head="chore/b")])
+        self.assertEqual(forge.list_open_prs("x", "release/4.1"),
+                         [dict(number=5, url="https://github.com/hoprnet/x/pull/5", head="chore/b", body="text")])
         self.assertIn("base=release%2F4.1", http.calls[0][1])
         forge.close_pr("x", 5, "Superseded by u")
-        self.assertEqual(http.calls[1][2], {"body": "Superseded by u"})
-        self.assertEqual(http.calls[2][2], {"state": "closed"})
+        self.assertEqual((http.calls[1][0], http.calls[1][2]), ("PATCH", {"state": "closed"}))
+        self.assertEqual((http.calls[2][0], http.calls[2][2]), ("POST", {"body": "Superseded by u"}))
+
+    def test_a_failed_close_posts_no_comment(self):
+        http = FakeHttp({("PATCH", "/pulls/5"): (422, {"message": "no"})})
+        with self.assertRaises(rc.Stop):
+            rc.ApiForge("t", http).close_pr("x", 5, "Superseded by u")
+        self.assertEqual([c[0] for c in http.calls], ["PATCH"])
+
+    def test_the_api_reads_every_page_of_open_prs(self):
+        def row(n):
+            return {"number": n, "html_url": f"https://github.com/hoprnet/x/pull/{n}", "head": {"ref": f"b{n}"}, "body": None}
+        pages = {"1": [row(n) for n in range(100)], "2": [row(n) for n in range(100, 130)]}
+        seen = []
+        def http(method, url, body=None):
+            page = re.search(r"[?&]page=(\d+)", url).group(1)
+            seen.append(page)
+            return 200, pages[page]
+        got = rc.ApiForge("t", http).list_open_prs("x", "main")
+        self.assertEqual((len(got), seen), (130, ["1", "2"]))
+        self.assertEqual(got[0]["body"], "")                    # a PR without a body reads as empty
 
 
 class OrderRule(unittest.TestCase):
@@ -1424,13 +1455,24 @@ class SwapVersusRevision(unittest.TestCase):
     def test_lock_commands_update_the_swapped_crate_once(self):
         ops = rc.operations(plan([], pins=[self.pin()], git_updates=[self.git()]))
         cmds = rc.lock_commands(ops[-1])
-        self.assertEqual([c for c in cmds if c.startswith("cargo update -p hopr-lib")], ["cargo update -p hopr-lib@%s" % ops[-1]["edits"][0]["required"]])      # from the version edit
+        self.assertEqual([c for c in cmds if c.startswith("cargo update -p hopr-lib")], ["cargo update -p hopr-lib@5"])      # from the version edit
         self.assertEqual(cmds.count("cargo update -p hopr-transport-mixer"), 1)
 
     def test_no_git_update_is_left_when_every_crate_of_the_group_is_swapped(self):
         git = dict(self.git(), crates=["hopr-lib"], edits=self.git()["edits"][:1])
         ops = rc.operations(plan([], pins=[self.pin()], git_updates=[git]))
         self.assertEqual(ops[-1].get("git_updates"), [])
+
+
+class LockCommandSpecs(unittest.TestCase):
+    def test_the_spec_is_the_compatibility_line_of_the_required_version(self):
+        self.assertEqual(rc.line_spec("5.0.0"), "5")
+        self.assertEqual(rc.line_spec("0.36.1"), "0.36")
+        self.assertEqual(rc.line_spec("0.0.3"), "0.0.3")
+
+    def test_a_lock_that_kept_a_newer_compatible_version_still_matches_the_spec(self):
+        op = dict(edits=[dict(crate="hopr-types", required="5.0.0")], lock_updates=[], git_updates=[])
+        self.assertIn("cargo update -p hopr-types@5", rc.lock_commands(op))   # 5 matches a locked 5.0.1, and not a locked 4.1.0
 
 
 class BreakingBumps(unittest.TestCase):
@@ -1855,8 +1897,85 @@ name = "serde"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 """
-        self.assertEqual(rc.git_specs(lock, ["hopli", "serde"]), {"hopli": "https://github.com/hoprnet/hopli#hopli@0.20.2"})
-        self.assertEqual(rc.git_revs(lock, ["hopli", "serde"]), {"hopli": "590adcfc01272277d2a328766db112c3e50cc0eb"})
+        self.assertEqual(rc.git_specs(lock, ["hopli", "serde"], "hopli", "main"), {"hopli": "https://github.com/hoprnet/hopli#hopli@0.20.2"})
+        self.assertEqual(rc.git_revs(lock, ["hopli", "serde"], "hopli", "main"), {"hopli": "590adcfc01272277d2a328766db112c3e50cc0eb"})
+
+    TWO_COPIES = """
+[[package]]
+name = "hopli"
+version = "0.20.2"
+source = "git+https://github.com/hoprnet/hopli?branch=main#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+[[package]]
+name = "hopli"
+version = "0.19.0"
+source = "git+https://github.com/hoprnet/hopli?branch=release%2F0.19#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+[[package]]
+name = "hopli"
+version = "0.18.0"
+source = "git+https://github.com/someone/hopli?branch=main#cccccccccccccccccccccccccccccccccccccccc"
+"""
+
+    def test_the_git_copy_is_chosen_by_repo_and_branch(self):
+        self.assertEqual(rc.git_specs(self.TWO_COPIES, ["hopli"], "hopli", "main"), {"hopli": "https://github.com/hoprnet/hopli#hopli@0.20.2"})
+        self.assertEqual(rc.git_revs(self.TWO_COPIES, ["hopli"], "hopli", "release/0.19"), {"hopli": "b" * 40})
+
+    def test_no_matching_git_copy_gives_no_spec(self):
+        self.assertEqual(rc.git_specs(self.TWO_COPIES, ["hopli"], "hopli", "develop"), {})
+
+    def test_two_git_copies_of_one_repo_and_branch_are_an_error(self):
+        lock = self.TWO_COPIES + """
+[[package]]
+name = "hopli"
+version = "0.20.3"
+source = "git+https://github.com/hoprnet/hopli?branch=main#dddddddddddddddddddddddddddddddddddddddd"
+"""
+        with self.assertRaises(rc.Stop) as cm:
+            rc.git_specs(lock, ["hopli"], "hopli", "main")
+        self.assertIn("hopli", str(cm.exception))
+
+    def test_a_rev_pinned_copy_matches_any_branch_of_its_repo(self):
+        lock = """
+[[package]]
+name = "hopr-lib"
+version = "5.0.0"
+source = "git+https://github.com/hoprnet/hoprnet?rev=af80993c9f7d20b1f277af6efacaeb05190698be#af80993c9f7d20b1f277af6efacaeb05190698be"
+"""
+        self.assertEqual(rc.git_revs(lock, ["hopr-lib"], "hoprnet", "master"), {"hopr-lib": "af80993c9f7d20b1f277af6efacaeb05190698be"})
+
+    def stale_step(self, **pin):
+        s = step("blokli-client", {"blokli-client": "0.35.0"}, todo={"blokli-client": "0.36.1"})
+        s["git_updates"] = [self.pin_update(**pin)]
+        return s
+
+    def test_a_locked_commit_that_lacks_the_fix_gets_a_repin_even_when_the_dependent_has_nothing_left_to_do(self):
+        # hopli#122 merged: the dependent has no gap now, but blokli-client's lock still holds the old commit
+        p = plan([self.stale_step(stale=True)])
+        p["dependents"] = [self.dependent(gaps=[])]
+        ops = rc.operations(p)
+        repin = next(o for o in ops if o["kind"] == "repin")
+        self.assertEqual((repin["repo"], repin["status"]), ("blokli-client", "ready"))
+        self.assertEqual(repin["git_updates"][0]["repo"], "hopli")
+        self.assertIn("cargo update -p 'https://github.com/hoprnet/hopli#hopli@0.20.2'", rc.lock_commands(repin))
+
+    def test_a_locked_commit_that_already_has_the_fix_adds_no_operation(self):
+        p = plan([self.stale_step(stale=False)])
+        p["dependents"] = [self.dependent(gaps=[])]
+        self.assertEqual([o["kind"] for o in rc.operations(p)], ["release"])
+
+    def test_a_rev_pin_of_the_dependent_is_edited_to_its_head(self):
+        edit = dict(file="Cargo.toml", line=7, key="hopli", crate="hopli", current="rev 590adcfc0", required="8" * 40, swap="git_rev")
+        p = plan([self.stale_step(stale=True, edits=[edit])])
+        p["dependents"] = [self.dependent(gaps=[])]
+        repin = next(o for o in rc.operations(p) if o["kind"] == "repin")
+        self.assertIn(edit, repin["edits"])
+
+    def test_a_dependent_without_an_operation_does_not_make_the_pinning_repo_wait(self):
+        p = plan([self.stale_step(stale=True)])
+        p["dependents"] = [self.dependent(gaps=[])]
+        repin = next(o for o in rc.operations(p) if o["kind"] == "repin")
+        self.assertEqual(repin["depends_on"], [])
 
     def dependent(self, **kw):
         base = dict(repo="hopli", branch="main", requires=[],
@@ -1985,6 +2104,14 @@ class StalePublished(unittest.TestCase):
         s["bump_crates"], s["release_versions"] = ["hopr-network-graph"], {"hopr-network-graph": "0.8.1"}
         s["entries"] = [dict(file="ct/Cargo.toml", table="dependencies", key="hopr-network-graph", crate="hopr-network-graph", req="0.8.0")]
         self.assertEqual(rc.operations(plan([s]))[0]["edits"], [])
+
+    def test_a_renamed_dependency_is_matched_by_its_manifest_key(self):
+        s = step("hopr-chain-connector", {"hopr-chain-connector": "0.29.0"})
+        s["entries"] = [dict(file="Cargo.toml", table="dependencies", key="api_types", crate="hopr-types", req="4.1.0")]
+        got = rc.plan_bumps(s, self.versions, reexports=lambda dep, key: key == "api_types",
+                            published_reqs=lambda c, v: [("hopr-types", "^4.1.0")], target={"hopr-types": "5.0.0"})
+        self.assertEqual(got["release_versions"], {"hopr-chain-connector": "0.30.0"})
+        self.assertEqual(got["bump_info"]["hopr-chain-connector"]["level"], "minor")
 
     def test_published_requirements_come_from_the_crates_io_dependency_list(self):
         rows = {"dependencies": [dict(crate_id="blokli-client", req="^0.35.0", kind="normal", optional=False),

@@ -131,17 +131,21 @@ new `--execute` run to publish the next layer. Expect one run per layer of the p
   a proposed major bump (minor for 0.x), not a patch. Review the number in the repin PR.
 - A crate whose head version is on crates.io is still released again when its published
   requirements do not admit the version the run releases for a dependency (main changed the
-  requirement without a version bump). The plan marks it `bump_crates` and checks crates.io with
-  the dependencies API of the published version.
+  requirement without a version bump). The repin operation then lists the new version in
+  `version_bumps`, and `crates_to_change` marks the release `republish`; the check reads the
+  dependencies API of the published version.
 - A bump also raises the repo's own requirements on the bumped crate (workspace and member
   manifests). Cargo fails without that.
 - The walk also covers repos that a plan repo pins by git or by dev-dependency (`hopli` under
   `blokli-client`). They get a repin when a requirement lags, and the pinning repo waits for it
   and refreshes its lock. A lock-only update in such a repo is not planned: cargo ignores a
-  dependency's own `Cargo.lock`.
+  dependency's own `Cargo.lock`. The pinning repo also gets a repin when its locked commit of
+  such a repo still lacks the fix, after that repo's own PR merged (a `rev` pin is edited to
+  the branch head). A pin from one repo below a plan repo to another is not edited.
 - The start repo is never released, but its stale published crates are bumped in its own repin PR.
 - A new repin PR closes the script's own earlier open PRs of the same kind on the same base,
-  named `chore/release-cascade-<kind>-*`. Other PRs stay open.
+  named `chore/release-cascade-<kind>-*` and opened for the same start repo (named in the PR
+  body). Other PRs, and the PRs of another start repo's run, stay open.
 - The wait for a merge retries a failed GitHub read (HTTP 5xx) and ends the run only after five
   failures in a row.
 - The script never merges, never tags and never runs `cargo publish`. Re-running is safe: an

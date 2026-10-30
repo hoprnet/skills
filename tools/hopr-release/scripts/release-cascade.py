@@ -546,7 +546,7 @@ def build_plan(start_repo, start_branch, planned=None):
         plan[(repo, b)] = dict(repo=repo, branch=b, crates=sorted(crates), head={c: head[c] for c in crates},
                                files={c: pk[c]["file"] for c in crates}, manifests={c: pk[c]["manifest"] for c in crates},
                                inherits=inherited_keys(ms), entries=dep_entries(ms), workflow=release_workflow(repo, b),
-                               pin_groups=group_git_pins(git_pins(ms), {}, rev_branch=branch_of_rev))
+                               pins=git_pins(ms), pin_groups=group_git_pins(git_pins(ms), {}, rev_branch=branch_of_rev))
     # order: a repo comes after every repo whose crates it requires, read from the branch heads
     crate_step = {c: k for k, s in plan.items() for c in s["crates"]}
     after = {k: {crate_step[e["crate"]] for e in s["entries"] if e["crate"] in crate_step} - {k} for k, s in plan.items()}
@@ -638,13 +638,19 @@ def build_plan(start_repo, start_branch, planned=None):
     for x in steps:
         x["git_updates"] = []
         for g in x["pin_groups"]:
-            if (g["repo"], g["branch"]) in hit:
-                code, text = run("git", "-C", str(WORKSPACE / x["repo"]), "show", f"origin/{x['branch']}:Cargo.lock", check=False)
-                revs = git_revs(text, g["crates"]) if code == 0 else {}
-                x["git_updates"].append(dict(repo=g["repo"], branch=g["branch"], crates=g["crates"],
-                                             locked=next(iter(revs.values()), "")[:9],
-                                             head=git(g["repo"], "rev-parse", f"origin/{g['branch']}").strip()[:9],
-                                             specs=git_specs(text, g["crates"]) if code == 0 else {}))
+            if (g["repo"], g["branch"]) not in hit:
+                continue
+            code, text = run("git", "-C", str(WORKSPACE / x["repo"]), "show", f"origin/{x['branch']}:Cargo.lock", check=False)
+            revs = git_revs(text, g["crates"], g["repo"], g["branch"]) if code == 0 else {}
+            locked = next(iter(revs.values()), "")
+            head = git(g["repo"], "rev-parse", f"origin/{g['branch']}").strip()
+            # a `rev` pin moves to the head of the branch; a branch pin moves with `cargo update -p`
+            rev_edits = [dict(file=p["file"], line=line_of(x["repo"], f"origin/{x['branch']}", p["file"], p["key"], p.get("table")),
+                              key=p["key"], crate=p["crate"], current=p["ref"], required=head, swap="git_rev")
+                         for p in x["pins"] if p["crate"] in g["crates"] and p["ref"].startswith("rev ")] if locked != head else []
+            x["git_updates"].append(dict(repo=g["repo"], branch=g["branch"], crates=g["crates"], locked=locked[:9], head=head[:9],
+                                         edits=rev_edits, stale=bool(locked) and locked != head and lock_is_stale(g["repo"], locked, target, owned),
+                                         specs=git_specs(text, g["crates"], g["repo"], g["branch"]) if code == 0 else {}))
     return dict(start=(start_repo, start_branch), steps=steps, fixed=fixed, pinned=sorted(pinned), pins=pins,
                 dependents=dependents, start_step=start_step, upstream=upstream, git_updates=git_updates, later_heads=later_heads,
                 patched=patch_pins(start_ms), bump_heads=bump_heads,
@@ -720,7 +726,8 @@ def plan_bumps(s, versions_of, reexports, published_reqs=None, target=None):
         deps = ", ".join(f"{g['crate']} {g['req']} -> {g['want']}" for g in breaking)
         info[c] = dict(level="major" if breaking_line(base)[0] > 0 else "minor", reason=f"re-exports a dependency that moves line: {deps}")
     for c, bad in stale.items():
-        moved = [(d, r) for d, r in bad if is_breaking(r, target[d]) and reexports(d, d)]
+        keys = lambda d: {e["key"] for e in s.get("entries", []) if e["crate"] == d} | {d}   # `package =` renames
+        moved = [(d, r) for d, r in bad if is_breaking(r, target[d]) and any(reexports(d, k) for k in keys(d))]
         if moved and c not in proposed:
             base = max(s["head"][c], max(versions_of(c), key=vkey, default=s["head"][c]), key=vkey)
             proposed[c] = bump_breaking(base)
@@ -812,20 +819,46 @@ def pin_closure(groups_per_repo, in_plan):
     return nodes
 
 
-def git_specs(lock_text, crates):
-    """{crate: cargo package spec} of the crates a Cargo.lock holds from a git source, so `cargo update -p` names the git copy."""
-    out = {}
+def git_copies(lock_text, crates, repo, branch):
+    """{crate: (url, version, revision)} of the copy of each crate that a Cargo.lock holds from the git repo `repo` on
+    `branch`. A source that names another branch is another copy; a `rev` or `tag` source names no branch and matches.
+    Two copies for one crate are an error: a `cargo update -p` could move the wrong one."""
+    found = {}
     for p in tomllib.loads(lock_text).get("package", []):
-        m = re.match(r"git\+([^?#]+)", p.get("source", ""))
-        if m and p["name"] in crates:
-            out[p["name"]] = f"{m.group(1)}#{p['name']}@{p['version']}"
-    return out
+        m = re.match(r"git\+([^?#]+)(?:\?([^#]*))?#(\w+)", p.get("source", ""))
+        if not m or p["name"] not in crates:
+            continue
+        url, query, rev = m.groups()
+        owner = re.search(r"github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+        if not owner or (owner.group(1).lower(), owner.group(2).lower()) != (ORG, repo.lower()):
+            continue
+        if dict(urllib.parse.parse_qsl(query or "")).get("branch", branch) != branch:
+            continue
+        found.setdefault(p["name"], []).append((url, p["version"], rev))
+    for name, copies in found.items():
+        if len(copies) > 1:
+            die(f"the lock holds {len(copies)} git copies of {name} from {repo}@{branch}: "
+                + ", ".join(f"{v} ({r[:9]})" for _, v, r in copies) + "; name one of them by hand")
+    return {name: copies[0] for name, copies in found.items()}
 
 
-def git_revs(lock_text, crates):
-    """{crate: locked git revision} of the crates a Cargo.lock holds from a git source."""
-    return {p["name"]: m.group(1) for p in tomllib.loads(lock_text).get("package", [])
-            if p["name"] in crates and (m := re.match(r"git\+[^#]+#(\w+)", p.get("source", "")))}
+def git_specs(lock_text, crates, repo, branch):
+    """{crate: cargo package spec} of the git copies in a Cargo.lock, so `cargo update -p` names the git copy."""
+    return {c: f"{url}#{c}@{version}" for c, (url, version, _) in git_copies(lock_text, crates, repo, branch).items()}
+
+
+def git_revs(lock_text, crates, repo, branch):
+    """{crate: locked git revision} of the git copies in a Cargo.lock."""
+    return {c: rev for c, (_, _, rev) in git_copies(lock_text, crates, repo, branch).items()}
+
+
+def lock_is_stale(repo, locked, target, owned):
+    """True when the manifests of the locked commit of a git dependency hold requirements that do not admit the versions
+    of the run: its lock entry must move to a newer commit. An unreadable commit counts as stale."""
+    try:
+        return bool(gaps(dep_entries(manifests(repo, locked)), target, owned))
+    except Stop:
+        return True
 
 
 def gaps(entries, target, owned):
@@ -883,9 +916,9 @@ class GhForge:
         return rows[0]["url"] if rows else None
 
     def list_open_prs(self, repo, base):
-        rows = json.loads(run("gh", "pr", "list", "--repo", f"{ORG}/{repo}", "--base", base, "--state", "open", "--limit", "100",
-                              "--json", "number,url,headRefName")[1] or "[]")
-        return [dict(number=r["number"], url=r["url"], head=r["headRefName"]) for r in rows]
+        rows = json.loads(run("gh", "pr", "list", "--repo", f"{ORG}/{repo}", "--base", base, "--state", "open", "--limit", "1000",
+                              "--json", "number,url,headRefName,body")[1] or "[]")
+        return [dict(number=r["number"], url=r["url"], head=r["headRefName"], body=r.get("body") or "") for r in rows]
 
     def close_pr(self, repo, number, comment):
         run("gh", "pr", "close", str(number), "--repo", f"{ORG}/{repo}", "--comment", comment)
@@ -1032,12 +1065,18 @@ class ApiForge:
         return rows[0]["html_url"] if rows else None
 
     def list_open_prs(self, repo, base):
-        rows = self._call("GET", f"/repos/{ORG}/{repo}/pulls?state=open&per_page=100&base={urllib.parse.quote(base, safe='')}")
-        return [dict(number=r["number"], url=r["html_url"], head=r["head"]["ref"]) for r in rows]
+        out, page = [], 1
+        while True:  # a page holds at most 100 PRs: read on until a short page
+            rows = self._call("GET", f"/repos/{ORG}/{repo}/pulls?state=open&per_page=100&page={page}&base={urllib.parse.quote(base, safe='')}")
+            out += [dict(number=r["number"], url=r["html_url"], head=r["head"]["ref"], body=r.get("body") or "") for r in rows]
+            if len(rows) < 100:
+                return out
+            page += 1
 
     def close_pr(self, repo, number, comment):
-        self._call("POST", f"/repos/{ORG}/{repo}/issues/{number}/comments", {"body": comment}, ok=(201,))
+        # close first: a failed close then leaves no comment that claims it, and a rerun comments once
         self._call("PATCH", f"/repos/{ORG}/{repo}/pulls/{number}", {"state": "closed"})
+        self._call("POST", f"/repos/{ORG}/{repo}/issues/{number}/comments", {"body": comment}, ok=(201,))
 
     def dispatch(self, repo, workflow, ref, inputs):
         """Triggers the workflow. Returns the run id when the API reports it (return_run_details), else None."""
@@ -1217,13 +1256,16 @@ def operations(plan):
                                                      then="open a PR with these edits and a refreshed Cargo.lock, then merge it"), d)
     for s in plan["steps"]:
         repin = None
-        pin_updates = [g for g in s.get("git_updates", []) if (g["repo"], g["branch"]) in dep_ops]
+        # a pinned repo with its own repin comes first; one that already merged leaves the lock on the old commit
+        pin_updates = [g for g in s.get("git_updates", []) if (g["repo"], g["branch"]) in dep_ops or g.get("stale")]
         if s["gaps"] or pin_updates or s.get("bump_crates"):
             bumps, own = bump_details(s, s["gaps"])  # the repo's own requirements on a bumped crate must admit its new version
-            repin = new("repin", repo=s["repo"], branch=s["branch"], edits=edits(s["repo"], s["branch"], s["gaps"] + own),
+            repin = new("repin", repo=s["repo"], branch=s["branch"],
+                        edits=edits(s["repo"], s["branch"], s["gaps"] + own) + [e for g in pin_updates for e in g.get("edits", [])],
                         version_bumps=bumps, git_updates=pin_updates,
                         depends_on=sorted({rel[g["crate"]] for g in s["gaps"] if g["crate"] in rel}
-                                          | {dep_ops[(g["repo"], g["branch"])][0]["id"] for g in pin_updates}),
+                                          | {dep_ops[(g["repo"], g["branch"])][0]["id"] for g in pin_updates
+                                             if (g["repo"], g["branch"]) in dep_ops}),
                         description=f"repin {s['repo']}@{s['branch']} to the released versions"
                                     + (" and bump its version" if bumps else ""),
                         then="open a PR with these edits and a refreshed Cargo.lock, then merge it")
@@ -1470,10 +1512,16 @@ def bump_text(text, b):
     return die(f"{b['file']}: no package version \"{b['current']}\" to bump for {b['crate']}")
 
 
+def line_spec(v):
+    """A partial version that matches every version on the compatibility line of `v` (5.0.0 -> 5, 0.36.1 -> 0.36), so a
+    lock that kept a newer compatible version still matches, and an older major in the same lock does not."""
+    return ".".join(str(x) for x in breaking_line(v))
+
+
 def lock_commands(op):
     cmds = ["cargo metadata --format-version 1 >/dev/null"]  # rewrites the lock for the edited requirements and versions
     # name@version: a transitive dependency can keep the old major in the lock, and a bare name is then ambiguous
-    cmds += [f"cargo update -p {c}@{v}" for c, v in dict.fromkeys((e["crate"], e["required"]) for e in op.get("edits", []))]
+    cmds += [f"cargo update -p {c}@{line_spec(v)}" for c, v in dict.fromkeys((e["crate"], e["required"]) for e in op.get("edits", []))]
     # an earlier step (metadata, an edited requirement) may have moved the crate already; the old version is then gone
     cmds += [f"{{ ! cargo pkgid {u['crate']}@{u['locked']} >/dev/null 2>&1 || cargo update -p {u['crate']}@{u['locked']} --precise {u['target']}; }}"
              for u in op.get("lock_updates", [])]
@@ -1575,12 +1623,13 @@ def unexpected_changes(porcelain, allowed):
     return sorted(p for p in paths if p not in set(allowed) | {"Cargo.lock"})
 
 
-def supersede(repo, base, kind, keep, url):
+def supersede(repo, base, kind, keep, url, start):
     """Close the script's own earlier open PRs of this kind on this base, other than the branch `keep`: a changed plan
-    gives a new branch, and the old PR would stay open beside it. PRs the script did not open are left alone.
-    -> the URLs closed"""
-    prefix = f"chore/release-cascade-{kind}-"
-    old = [p for p in FORGE.list_open_prs(repo, base) if p["head"].startswith(prefix) and p["head"] != keep]
+    gives a new branch, and the old PR would stay open beside it. PRs the script did not open, and PRs of another start
+    repo's run (named in the PR body by `pr_text`), are left alone. -> the URLs closed"""
+    prefix, marker = f"chore/release-cascade-{kind}-", f"release cascade from {start[0]}@{start[1]}."
+    old = [p for p in FORGE.list_open_prs(repo, base)
+           if p["head"].startswith(prefix) and p["head"] != keep and marker in (p.get("body") or "")]
     for p in old:
         FORGE.close_pr(repo, p["number"], f"Superseded by {url}: the plan changed after this PR was opened. Closed by release-cascade.py.")
     return [p["url"] for p in old]
@@ -1589,7 +1638,7 @@ def supersede(repo, base, kind, keep, url):
 def apply_op(op, start, shell=None):
     """apply_op_new, then close the PRs it supersedes."""
     result = apply_op_new(op, start, shell)
-    result["superseded"] = supersede(op["repo"], op["branch"], op["kind"], result["branch"], result["url"])
+    result["superseded"] = supersede(op["repo"], op["branch"], op["kind"], result["branch"], result["url"], start)
     return result
 
 
