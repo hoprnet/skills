@@ -1,0 +1,39 @@
+{
+  "checked_at": "2026-11-04",
+  "sources": {
+    "hoprnet/hoprnet": "13c4c81611e472e874484c1f21a083c3840629dc",
+    "hoprnet/hoprd": "2d3ee8925c2ad913801c771b574f922bd9e84fec",
+    "hoprnet/hopr-impls": "36fd2732cb489cee4624e1dc7705947044639888",
+    "hoprnet/hopr-strategy": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+    "hoprnet/hopr-utilities": "1d433273a441e038f4f62f95b14a56c6ee206782",
+    "hoprnet/hopr-types": "1f8cd38664d6c8c1fe6b342b2dd0f36c8fcfde48",
+    "hoprnet/skills": "c0ac59dee96bda661e03b9d53b44dd92f9f68fbd"
+  },
+  "pending": {
+    "hopr-impls#62": {
+      "url": "https://github.com/hoprnet/hopr-impls/pull/62",
+      "state": "open",
+      "head": "55495f1432098d63b097667470d13bf0d556dfdc"
+    },
+    "hopr-impls#76": {
+      "url": "https://github.com/hoprnet/hopr-impls/pull/76",
+      "state": "open",
+      "head": "e4066d24b14c988e01f93f8482650a23d27b382b"
+    },
+    "hoprnet#8604": {
+      "url": "https://github.com/hoprnet/hoprnet/pull/8604",
+      "state": "open",
+      "head": "e7057eb810460a9e6d8a0f9aba5b636225190972"
+    },
+    "hoprnet#8614": {
+      "url": "https://github.com/hoprnet/hoprnet/pull/8614",
+      "state": "open",
+      "head": "f64e438bea50abca5a08479f87b7fda664821a37"
+    },
+    "hopr-strategy#130": {
+      "url": "https://github.com/hoprnet/hopr-strategy/pull/130",
+      "state": "open",
+      "head": "6046cef038204d93ba1ed3be5c1734b488fea7ea"
+    }
+  }
+}

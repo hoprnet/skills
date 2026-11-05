@@ -1,0 +1,2077 @@
+{
+  "schema_version": 1,
+  "verified_on": "2026-11-04",
+  "scope": "Statically named Simple/Multi Counter/Gauge/Histogram declarations in inspected production sources of hoprnet, hoprd, hopr-impls, hopr-strategy and hopr-utilities. Excludes test-only instruments, dynamic/third-party/runtime families, and pending PR additions. Not a live scrape or release-availability assertion.",
+  "count": 146,
+  "metrics": [
+    {
+      "repo": "hoprnet/hopr-impls",
+      "path": "transport/p2p/src/peer_store.rs",
+      "line": 19,
+      "name": "hopr_peer_count",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Number of all peers",
+      "source_commit": "36fd2732cb489cee4624e1dc7705947044639888",
+      "source_url": "https://github.com/hoprnet/hopr-impls/blob/36fd2732cb489cee4624e1dc7705947044639888/transport/p2p/src/peer_store.rs#L19",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-impls",
+      "path": "transport/p2p/src/swarm.rs",
+      "line": 23,
+      "name": "hopr_transport_p2p_active_connection_count",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Number of currently active p2p connections as observed from libp2p events",
+      "source_commit": "36fd2732cb489cee4624e1dc7705947044639888",
+      "source_url": "https://github.com/hoprnet/hopr-impls/blob/36fd2732cb489cee4624e1dc7705947044639888/transport/p2p/src/swarm.rs#L23",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-impls",
+      "path": "transport/p2p/src/swarm.rs",
+      "line": 27,
+      "name": "hopr_transport_p2p_nat_status",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Current NAT status as reported by libp2p autonat. 0=Unknown, 1=Public, 2=Private",
+      "source_commit": "36fd2732cb489cee4624e1dc7705947044639888",
+      "source_url": "https://github.com/hoprnet/hopr-impls/blob/36fd2732cb489cee4624e1dc7705947044639888/transport/p2p/src/swarm.rs#L27",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-impls",
+      "path": "transport/p2p/src/swarm.rs",
+      "line": 32,
+      "name": "hopr_network_health",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Connectivity health indicator",
+      "source_commit": "36fd2732cb489cee4624e1dc7705947044639888",
+      "source_url": "https://github.com/hoprnet/hopr-impls/blob/36fd2732cb489cee4624e1dc7705947044639888/transport/p2p/src/swarm.rs#L32",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-impls",
+      "path": "session-server-forwarder/src/lib.rs",
+      "line": 26,
+      "name": "hopr_session_hoprd_target_connections",
+      "type": "MultiGauge",
+      "labels": [
+        "type"
+      ],
+      "meaning": "Number of currently active HOPR session target connections on this Exit node",
+      "source_commit": "36fd2732cb489cee4624e1dc7705947044639888",
+      "source_url": "https://github.com/hoprnet/hopr-impls/blob/36fd2732cb489cee4624e1dc7705947044639888/session-server-forwarder/src/lib.rs#L26",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hopr-impls",
+      "path": "graph/src/petgraph/update.rs",
+      "line": 11,
+      "name": "hopr_peers_by_quality",
+      "type": "SimpleHistogram",
+      "labels": [],
+      "meaning": "Distribution of the quality score of the node's directly-probed neighbors",
+      "source_commit": "36fd2732cb489cee4624e1dc7705947044639888",
+      "source_url": "https://github.com/hoprnet/hopr-impls/blob/36fd2732cb489cee4624e1dc7705947044639888/graph/src/petgraph/update.rs#L11",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprd",
+      "path": "hoprd/src/strategy.rs",
+      "line": 104,
+      "name": "hopr_strategy_enabled_strategies",
+      "type": "MultiGauge",
+      "labels": [
+        "strategy"
+      ],
+      "meaning": "List of enabled strategies",
+      "source_commit": "2d3ee8925c2ad913801c771b574f922bd9e84fec",
+      "source_url": "https://github.com/hoprnet/hoprd/blob/2d3ee8925c2ad913801c771b574f922bd9e84fec/hoprd/src/strategy.rs#L104",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprd",
+      "path": "rest-api/src/middleware/prometheus.rs",
+      "line": 7,
+      "name": "hoprd_http_api_call_count",
+      "type": "MultiCounter",
+      "labels": [
+        "path",
+        "method",
+        "status"
+      ],
+      "meaning": "Number of different REST API calls and their statuses",
+      "source_commit": "2d3ee8925c2ad913801c771b574f922bd9e84fec",
+      "source_url": "https://github.com/hoprnet/hoprd/blob/2d3ee8925c2ad913801c771b574f922bd9e84fec/rest-api/src/middleware/prometheus.rs#L7",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprd",
+      "path": "rest-api/src/middleware/prometheus.rs",
+      "line": 13,
+      "name": "hoprd_http_api_call_timing_sec",
+      "type": "MultiHistogram",
+      "labels": [
+        "path",
+        "method"
+      ],
+      "meaning": "Timing of different REST API calls in seconds",
+      "source_commit": "2d3ee8925c2ad913801c771b574f922bd9e84fec",
+      "source_url": "https://github.com/hoprnet/hoprd/blob/2d3ee8925c2ad913801c771b574f922bd9e84fec/rest-api/src/middleware/prometheus.rs#L13",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprd",
+      "path": "rest-api/src/middleware/prometheus.rs",
+      "line": 20,
+      "name": "hoprd_http_api_last_used_time",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "The unix timestamp in seconds at which any API endpoint was last fetched",
+      "source_commit": "2d3ee8925c2ad913801c771b574f922bd9e84fec",
+      "source_url": "https://github.com/hoprnet/hoprd/blob/2d3ee8925c2ad913801c771b574f922bd9e84fec/rest-api/src/middleware/prometheus.rs#L20",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/session/src/processing/reassembly.rs",
+      "line": 26,
+      "name": "hopr_session_time_to_finish_frame",
+      "type": "SimpleHistogram",
+      "labels": [],
+      "meaning": "Measures time in milliseconds it takes a frame to be reassembled",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/session/src/processing/reassembly.rs#L26",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/ticket_processing.rs",
+      "line": 18,
+      "name": "hopr_tickets_unack_peers_total",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Number of peers with unacknowledged tickets in cache",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/ticket_processing.rs#L18",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/ticket_processing.rs",
+      "line": 23,
+      "name": "hopr_tickets_unack_tickets_total",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Total number of unacknowledged tickets across all peer caches",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/ticket_processing.rs#L23",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/ticket_processing.rs",
+      "line": 28,
+      "name": "hopr_tickets_unack_insertions_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of unacknowledged tickets inserted into cache",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/ticket_processing.rs#L28",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/ticket_processing.rs",
+      "line": 33,
+      "name": "hopr_tickets_unack_lookups_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of ticket acknowledgement lookups",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/ticket_processing.rs#L33",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/ticket_processing.rs",
+      "line": 38,
+      "name": "hopr_tickets_unack_lookup_misses_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of ticket lookup failures (unknown ticket)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/ticket_processing.rs#L38",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/ticket_processing.rs",
+      "line": 43,
+      "name": "hopr_tickets_unack_evictions_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of unacknowledged tickets evicted from cache due to TTL or capacity limits",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/ticket_processing.rs#L43",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/ticket_processing.rs",
+      "line": 48,
+      "name": "hopr_tickets_unack_peer_evictions_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of peer caches evicted from the outer unacknowledged ticket cache",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/ticket_processing.rs#L48",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/ticket_processing.rs",
+      "line": 53,
+      "name": "hopr_tickets_unack_tickets_per_peer",
+      "type": "MultiGauge",
+      "labels": [
+        "peer"
+      ],
+      "meaning": "Number of unacknowledged tickets per peer in cache (enable with HOPR_METRICS_UNACK_PER_PEER=1)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/ticket_processing.rs#L53",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/surb_store.rs",
+      "line": 513,
+      "name": "hopr_surb_store_evictions_count",
+      "type": "MultiCounter",
+      "labels": [
+        "cache",
+        "cause"
+      ],
+      "meaning": "Number of entries evicted from the SURB store caches, by cache and removal cause",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/surb_store.rs#L513",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/surb_store.rs",
+      "line": 519,
+      "name": "hopr_surb_store_evictions_last_interval",
+      "type": "MultiGauge",
+      "labels": [
+        "cache",
+        "cause"
+      ],
+      "meaning": "Entries evicted from the SURB store caches during the last completed report interval, by cache and removal cause",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/surb_store.rs#L519",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/surb_store.rs",
+      "line": 525,
+      "name": "hopr_surb_store_admissions_count",
+      "type": "MultiCounter",
+      "labels": [
+        "event"
+      ],
+      "meaning": "Admission-control events in the SURB store, by event kind",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/surb_store.rs#L525",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "protocols/hopr/src/surb_store.rs",
+      "line": 531,
+      "name": "hopr_surb_store_surbs_held",
+      "type": "MultiGauge",
+      "labels": [
+        "class"
+      ],
+      "meaning": "SURBs currently held by the SURB store, by trust class",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/protocols/hopr/src/surb_store.rs#L531",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/manager.rs",
+      "line": 73,
+      "name": "hopr_session_num_active_sessions",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Number of currently active HOPR sessions",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/manager.rs#L73",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/manager.rs",
+      "line": 77,
+      "name": "hopr_session_established_sessions_count",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Number of sessions that were successfully established as an Exit node",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/manager.rs#L77",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/manager.rs",
+      "line": 81,
+      "name": "hopr_session_initiated_sessions_count",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Number of sessions that were successfully initiated as an Entry node",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/manager.rs#L81",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/manager.rs",
+      "line": 85,
+      "name": "hopr_session_received_error_count",
+      "type": "MultiCounter",
+      "labels": [
+        "kind"
+      ],
+      "meaning": "Number of HOPR session errors received from an Exit node",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/manager.rs#L85",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/manager.rs",
+      "line": 90,
+      "name": "hopr_session_dispatched_messages",
+      "type": "MultiCounter",
+      "labels": [
+        "kind"
+      ],
+      "meaning": "Number dispatched HOPR session messages and their classification",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/manager.rs#L90",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/manager.rs",
+      "line": 95,
+      "name": "hopr_session_sent_error_count",
+      "type": "MultiCounter",
+      "labels": [
+        "kind"
+      ],
+      "meaning": "Number of HOPR session errors sent to an Entry node",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/manager.rs#L95",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 237,
+      "name": "hopr_pix_sessions_active",
+      "type": "MultiGauge",
+      "labels": [
+        "gate_mode"
+      ],
+      "meaning": "Incoming PIX sessions currently supervised by this Exit, by front-gate mode",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L237",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 242,
+      "name": "hopr_pix_cycles_active",
+      "type": "MultiGauge",
+      "labels": [
+        "phase"
+      ],
+      "meaning": "SSA cycles currently retained by PIX supervisors, by phase (excludes recovered tombstones)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L242",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 247,
+      "name": "hopr_pix_predeposit_exposure_packets",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Packets served by currently unfunded PIX fronts and not yet converted into funded service",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L247",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 251,
+      "name": "hopr_pix_live_cycle_bytes",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Reconstructor-cycle bytes currently reserved against the node's max_live_cycle_bytes",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L251",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 255,
+      "name": "hopr_pix_held_shares",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Shares held by the part builders of live PIX cycles on this Exit, until their polynomial reconstructs",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L255",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 259,
+      "name": "hopr_pix_cycle_bytes_reserved_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Reconstructor-cycle bytes ever reserved at PIX session admission",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L259",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 263,
+      "name": "hopr_pix_cycle_bytes_released_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Reconstructor-cycle bytes ever returned to the node's live-cycle budget",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L263",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 267,
+      "name": "hopr_pix_cycles_total",
+      "type": "MultiCounter",
+      "labels": [
+        "event"
+      ],
+      "meaning": "SSA cycle lifecycle transitions observed by PIX supervisors, by event",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L267",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 272,
+      "name": "hopr_pix_ssa_requests_resent_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Successor SsaRequests the PIX supervisor asked to have sent again because the Entry had not answered them",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L272",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 276,
+      "name": "hopr_pix_admission_rejections_total",
+      "type": "MultiCounter",
+      "labels": [
+        "reason"
+      ],
+      "meaning": "Incoming PIX sessions refused before establishment, by reason",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L276",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 281,
+      "name": "hopr_pix_egress_packets_total",
+      "type": "MultiCounter",
+      "labels": [
+        "mode"
+      ],
+      "meaning": "Exit-to-Entry data packets admitted by PIX egress gates, by what paid for them",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L281",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 286,
+      "name": "hopr_pix_gate_blocks_total",
+      "type": "MultiCounter",
+      "labels": [
+        "reason"
+      ],
+      "meaning": "PIX egress block episodes entered, by reason (counted once per episode, not per refused packet)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L286",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 291,
+      "name": "hopr_pix_gate_block_seconds",
+      "type": "MultiHistogram",
+      "labels": [
+        "reason"
+      ],
+      "meaning": "How long PIX egress stayed blocked, from first refusal until service resumed or the session closed",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L291",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 297,
+      "name": "hopr_pix_shares_total",
+      "type": "MultiCounter",
+      "labels": [
+        "kind"
+      ],
+      "meaning": "Supervisor-validated SSA shares newly accepted by this Exit, by whether they advanced reconstruction",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L297",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 302,
+      "name": "hopr_pix_cycle_egress_packets",
+      "type": "MultiHistogram",
+      "labels": [
+        "outcome"
+      ],
+      "meaning": "Packets served while one SSA cycle held the accounting front, observed once when it finalized",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L302",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 308,
+      "name": "hopr_pix_cycle_useful_share_fraction",
+      "type": "MultiHistogram",
+      "labels": [
+        "outcome"
+      ],
+      "meaning": "How far an SSA cycle got towards recovery, as useful shares over target, observed once at finalization",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L308",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 314,
+      "name": "hopr_pix_cycle_accepted_share_fraction",
+      "type": "MultiHistogram",
+      "labels": [
+        "outcome"
+      ],
+      "meaning": "Shares accepted for an SSA cycle over its useful-share target, observed once at finalization; exceeds one for a conforming Entry's surplus",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L314",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 320,
+      "name": "hopr_pix_sessions_stalled",
+      "type": "MultiGauge",
+      "labels": [
+        "cause"
+      ],
+      "meaning": "PIX sessions whose fill is currently not keeping up, by cause",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L320",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 325,
+      "name": "hopr_pix_cycle_phase_seconds",
+      "type": "MultiHistogram",
+      "labels": [
+        "phase"
+      ],
+      "meaning": "How long an SSA cycle spent in one supervisor phase, observed when it leaves that phase",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L325",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 331,
+      "name": "hopr_pix_deposits_confirmed_uhopr_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Deposit value confirmed for SSA cycles of this Exit, in uHOPR (1e-6 HOPR)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L331",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 335,
+      "name": "hopr_pix_deposits_recovered_uhopr_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Deposit value this Exit actually unlocked by fully recovering the cycle, in uHOPR (1e-6 HOPR)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L335",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 339,
+      "name": "hopr_pix_closures_total",
+      "type": "MultiCounter",
+      "labels": [
+        "reason"
+      ],
+      "meaning": "Sessions closed by the PIX supervisor, by reason",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L339",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/pix.rs",
+      "line": 344,
+      "name": "hopr_pix_fill_backoff_total",
+      "type": "MultiCounter",
+      "labels": [
+        "reason"
+      ],
+      "meaning": "Times PIX fill held back, by reason",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/pix.rs#L344",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 51,
+      "name": "hopr_session_snapshot_at_ms",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session telemetry sample time in unix milliseconds",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L51",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 56,
+      "name": "hopr_session_lifetime_created_at_ms",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session creation time in unix milliseconds",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L56",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 61,
+      "name": "hopr_session_lifetime_last_activity_at_ms",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Last session activity time in unix milliseconds",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L61",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 66,
+      "name": "hopr_session_lifetime_uptime_ms",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session uptime in milliseconds",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L66",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 71,
+      "name": "hopr_session_lifetime_idle_ms",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session idle time in milliseconds",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L71",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 76,
+      "name": "hopr_session_lifetime_state",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session lifecycle state encoded as Active=0, Closing=1, Closed=2",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L76",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 81,
+      "name": "hopr_session_lifetime_pipeline_errors_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session pipeline processing errors",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L81",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 86,
+      "name": "hopr_session_frame_mtu_bytes",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Configured frame MTU in bytes",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L86",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 91,
+      "name": "hopr_session_frame_timeout_ms",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Configured frame timeout in milliseconds",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L91",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 96,
+      "name": "hopr_session_frame_frame_capacity",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Configured frame buffer capacity",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L96",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 101,
+      "name": "hopr_session_frame_being_assembled",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Number of frames currently being assembled",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L101",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 106,
+      "name": "hopr_session_frame_completed_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Number of frames successfully completed",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L106",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 111,
+      "name": "hopr_session_frame_emitted_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Number of frames emitted from the sequencer",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L111",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 116,
+      "name": "hopr_session_frame_discarded_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Number of frames discarded by the session protocol",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L116",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 121,
+      "name": "hopr_session_ack_mode",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Configured ack mode encoded as None=0, Partial=1, Full=2, Both=3",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L121",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 126,
+      "name": "hopr_session_ack_incoming_segments_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Incoming session segments",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L126",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 131,
+      "name": "hopr_session_ack_incoming_retransmission_requests_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Incoming session retransmission requests",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L131",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 136,
+      "name": "hopr_session_ack_incoming_acknowledged_frames_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Incoming session acknowledgements",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L136",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 141,
+      "name": "hopr_session_ack_outgoing_segments_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Outgoing session segments",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L141",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 146,
+      "name": "hopr_session_ack_outgoing_retransmission_requests_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Outgoing session retransmission requests",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L146",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 151,
+      "name": "hopr_session_ack_outgoing_acknowledged_frames_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Outgoing session acknowledgements",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L151",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 156,
+      "name": "hopr_session_surb_produced_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Produced SURBs per session",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L156",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 161,
+      "name": "hopr_session_surb_consumed_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Consumed SURBs per session",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L161",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 166,
+      "name": "hopr_session_surb_buffer_estimate",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Balancer estimate of the SURBs the counterparty holds, bounded by its store and corrected by its reports",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L166",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 171,
+      "name": "hopr_session_surb_target_buffer",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Configured SURB target buffer size",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L171",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 176,
+      "name": "hopr_session_surb_rate_per_sec",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "SURB production rate per second, averaged over at least one second; see hopr_surb_balancer_surbs_rate for the net rate",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L176",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 181,
+      "name": "hopr_session_surb_refill_in_flight",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Whether SURB refill is currently configured for a session (1 or 0)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L181",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 186,
+      "name": "hopr_session_transport_bytes_in_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session ingress bytes",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L186",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 191,
+      "name": "hopr_session_transport_bytes_out_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session egress bytes",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L191",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 196,
+      "name": "hopr_session_transport_packets_in_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session ingress packets",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L196",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 201,
+      "name": "hopr_session_transport_packets_out_total",
+      "type": "MultiCounter",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Session egress packets",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L201",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 206,
+      "name": "hopr_session_pix_gate_mode",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "PIX egress gate mode encoded as Predeposit=0, Funded=1",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L206",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 211,
+      "name": "hopr_session_pix_recovery_progress",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Recovery progress of a session's most recently advanced SSA, as a ratio of useful shares to target",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L211",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 216,
+      "name": "hopr_session_pix_fill_rate",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Planned rate in packets per second for the Exit's own PIX fill keep-alives; emission is bounded by the SURB reserve, so see hopr_session_pix_fill_packets_total for what went out",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L216",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/telemetry/mod.rs",
+      "line": 221,
+      "name": "hopr_session_pix_fill_packets_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "PIX fill keep-alives originated by this Exit, above its SURB-level notification rate",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/telemetry/mod.rs#L221",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/balancer/controller.rs",
+      "line": 30,
+      "name": "hopr_surb_balancer_target_error_estimate",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Target error estimation by the SURB balancer",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/balancer/controller.rs#L30",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/balancer/controller.rs",
+      "line": 36,
+      "name": "hopr_surb_balancer_control_output",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Control output of the SURB balancer",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/balancer/controller.rs#L36",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/balancer/controller.rs",
+      "line": 42,
+      "name": "hopr_surb_balancer_current_buffer_estimate",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Estimated number of SURBs in the buffer",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/balancer/controller.rs#L42",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/balancer/controller.rs",
+      "line": 48,
+      "name": "hopr_surb_balancer_current_buffer_target",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Current target (setpoint) number of SURBs in the buffer",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/balancer/controller.rs#L48",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/session/src/balancer/controller.rs",
+      "line": 54,
+      "name": "hopr_surb_balancer_surbs_rate",
+      "type": "MultiGauge",
+      "labels": [
+        "session_id"
+      ],
+      "meaning": "Estimation of SURB rate per second (positive is buffer surplus, negative is buffer loss)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/session/src/balancer/controller.rs#L54",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/protocol/stream.rs",
+      "line": 30,
+      "name": "hopr_egress_ring_buffer_dropped",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Number of packets dropped due to per-peer egress channel overflow (drop-newest)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/protocol/stream.rs#L30",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/path/planner.rs",
+      "line": 28,
+      "name": "hopr_path_length",
+      "type": "SimpleHistogram",
+      "labels": [],
+      "meaning": "Distribution of number of hops of sent messages",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/path/planner.rs#L28",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/protocol/pipeline/mod.rs",
+      "line": 94,
+      "name": "hopr_packets_count",
+      "type": "MultiCounter",
+      "labels": [
+        "type"
+      ],
+      "meaning": "Number of processed packets of different types (sent, received, forwarded)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/protocol/pipeline/mod.rs#L94",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/protocol/pipeline/mod.rs",
+      "line": 99,
+      "name": "hopr_packet_rejected_count",
+      "type": "MultiCounter",
+      "labels": [
+        "reason"
+      ],
+      "meaning": "Number of incoming packets rejected due various reasons; reason=duplicate_ticket_index counts packets dropped before forwarding because their ticket index was already accepted on the same channel and epoch (replayed index attack)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/protocol/pipeline/mod.rs#L99",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/protocol/pipeline/mod.rs",
+      "line": 108,
+      "name": "hopr_packet_decode_timeouts_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Number of incoming packets dropped due to decode timeout (sustained rate indicates Rayon pool saturation)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/protocol/pipeline/mod.rs#L108",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/protocol/pipeline/mod.rs",
+      "line": 112,
+      "name": "hopr_packet_ticket_validation_errors",
+      "type": "MultiCounter",
+      "labels": [
+        "type"
+      ],
+      "meaning": "Number of different ticket validation errors encountered during packet processing",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/protocol/pipeline/mod.rs#L112",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/protocol/pipeline/mod.rs",
+      "line": 117,
+      "name": "hopr_protocol_ack_received_count",
+      "type": "MultiCounter",
+      "labels": [
+        "valid"
+      ],
+      "meaning": "Number of received acknowledgements",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/protocol/pipeline/mod.rs#L117",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/protocol/pipeline/mod.rs",
+      "line": 122,
+      "name": "hopr_protocol_ack_sent_count",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Number of sent message acknowledgements",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/protocol/pipeline/mod.rs#L122",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/protocol/pipeline/mod.rs",
+      "line": 126,
+      "name": "hopr_tickets_count",
+      "type": "MultiCounter",
+      "labels": [
+        "type"
+      ],
+      "meaning": "Number of tickets by type (winning, losing, rejected)",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/protocol/pipeline/mod.rs#L126",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/hopr/src/protocol/pipeline/mod.rs",
+      "line": 132,
+      "name": "hopr_pix_share_insert_failures",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Number of failed encrypted share insertions into the exit acknowledgement processor",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/hopr/src/protocol/pipeline/mod.rs#L132",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/mixer/src/metrics.rs",
+      "line": 16,
+      "name": "hopr_mixer_queue_size",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Current mixer queue size",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/mixer/src/metrics.rs#L16",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/mixer/src/metrics.rs",
+      "line": 18,
+      "name": "hopr_mixer_average_packet_delay",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Average mixer packet delay averaged over a packet window",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/mixer/src/metrics.rs#L18",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/mixer/src/metrics.rs",
+      "line": 24,
+      "name": "hopr_mixer_packet_delay_ms",
+      "type": "SimpleHistogram",
+      "labels": [],
+      "meaning": "Distribution of per-packet mixer output delay in milliseconds",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/mixer/src/metrics.rs#L24",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/mixer/src/metrics.rs",
+      "line": 34,
+      "name": "hopr_mixer_effective_anonymity_set",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Estimated effective anonymity set (2^H) of the mixer's current occupancy",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/mixer/src/metrics.rs#L34",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "transport/mixer/src/metrics.rs",
+      "line": 43,
+      "name": "hopr_mixer_window_miss_ratio",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "EMA fraction of packets delivered beyond the hard delay bound due to scheduling overruns",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/transport/mixer/src/metrics.rs#L43",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "hopr/hopr-lib/src/builder.rs",
+      "line": 68,
+      "name": "hopr_start_time",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "The unix timestamp in seconds at which the process was started",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/hopr/hopr-lib/src/builder.rs#L68",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "hopr/hopr-lib/src/builder.rs",
+      "line": 72,
+      "name": "hopr_lib_version",
+      "type": "MultiGauge",
+      "labels": [
+        "version"
+      ],
+      "meaning": "Executed version of hopr-lib",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/hopr/hopr-lib/src/builder.rs#L72",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "hopr/hopr-lib/src/builder.rs",
+      "line": 77,
+      "name": "hopr_node_addresses",
+      "type": "MultiGauge",
+      "labels": [
+        "peerid",
+        "address",
+        "safe_address",
+        "module_address"
+      ],
+      "meaning": "Node on-chain and off-chain addresses",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/hopr/hopr-lib/src/builder.rs#L77",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "hopr/hopr-lib/src/builder/chain_wiring.rs",
+      "line": 23,
+      "name": "hopr_channels_count",
+      "type": "MultiGauge",
+      "labels": [
+        "direction"
+      ],
+      "meaning": "Number of open channels of the node per direction",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/hopr/hopr-lib/src/builder/chain_wiring.rs#L23",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hoprnet",
+      "path": "utils-session/src/lib.rs",
+      "line": 67,
+      "name": "hopr_session_hoprd_clients",
+      "type": "MultiGauge",
+      "labels": [
+        "type"
+      ],
+      "meaning": "Number of clients connected at this Entry node",
+      "source_commit": "13c4c81611e472e874484c1f21a083c3840629dc",
+      "source_url": "https://github.com/hoprnet/hoprnet/blob/13c4c81611e472e874484c1f21a083c3840629dc/utils-session/src/lib.rs#L67",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "excluded_from_HOPRd_REST_metrics; inspect_OTLP_or_embedding_snapshot"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/parallelize/mod.rs",
+      "line": 97,
+      "name": "hopr_rayon_tasks_submitted_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of tasks submitted to the Rayon thread pool",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/parallelize/mod.rs#L97",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/parallelize/mod.rs",
+      "line": 103,
+      "name": "hopr_rayon_tasks_completed_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of Rayon tasks that completed and delivered results",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/parallelize/mod.rs#L103",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/parallelize/mod.rs",
+      "line": 109,
+      "name": "hopr_rayon_tasks_cancelled_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of Rayon tasks skipped because receiver was already dropped",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/parallelize/mod.rs#L109",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/parallelize/mod.rs",
+      "line": 115,
+      "name": "hopr_rayon_tasks_orphaned_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of Rayon tasks whose results were discarded after completion",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/parallelize/mod.rs#L115",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/parallelize/mod.rs",
+      "line": 121,
+      "name": "hopr_rayon_tasks_rejected_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Total number of tasks rejected due to queue being full",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/parallelize/mod.rs#L121",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/parallelize/mod.rs",
+      "line": 127,
+      "name": "hopr_rayon_queue_wait_seconds",
+      "type": "SimpleHistogram",
+      "labels": [],
+      "meaning": "Time tasks spend waiting in the Rayon queue before execution starts",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/parallelize/mod.rs#L127",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/parallelize/mod.rs",
+      "line": 134,
+      "name": "hopr_rayon_execution_seconds",
+      "type": "MultiHistogram",
+      "labels": [
+        "operation"
+      ],
+      "meaning": "Time tasks spend executing in the Rayon thread pool",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/parallelize/mod.rs#L134",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/parallelize/mod.rs",
+      "line": 142,
+      "name": "hopr_rayon_outstanding_tasks",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Current number of tasks queued or running in the Rayon pool",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/parallelize/mod.rs#L142",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/parallelize/mod.rs",
+      "line": 147,
+      "name": "hopr_rayon_queue_limit",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Configured maximum outstanding tasks for the Rayon thread pool",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/parallelize/mod.rs#L147",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/network_types/udp.rs",
+      "line": 22,
+      "name": "hopr_udp_ingress_packet_len",
+      "type": "SimpleHistogram",
+      "labels": [],
+      "meaning": "UDP packet lengths on ingress",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/network_types/udp.rs#L22",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-utilities",
+      "path": "src/network_types/udp.rs",
+      "line": 28,
+      "name": "hopr_udp_egress_packet_len",
+      "type": "SimpleHistogram",
+      "labels": [],
+      "meaning": "UDP packet lengths on egress",
+      "source_commit": "1d433273a441e038f4f62f95b14a56c6ee206782",
+      "source_url": "https://github.com/hoprnet/hopr-utilities/blob/1d433273a441e038f4f62f95b14a56c6ee206782/src/network_types/udp.rs#L28",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/auto_funding.rs",
+      "line": 48,
+      "name": "hopr_strategy_auto_funding_funding_count",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of initiated automatic fundings",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/auto_funding.rs#L48",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration",
+      "implementation": "legacy_strategy; do_not_assume_current_lifecycle_uses_this_instrument"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/auto_funding.rs",
+      "line": 50,
+      "name": "hopr_strategy_auto_funding_failure_count",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of failed automatic funding attempts",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/auto_funding.rs#L50",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration",
+      "implementation": "legacy_strategy; do_not_assume_current_lifecycle_uses_this_instrument"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/auto_redeeming.rs",
+      "line": 44,
+      "name": "hopr_strategy_auto_redeem_redeem_count",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of initiated automatic redemptions",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/auto_redeeming.rs#L44",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_finalizer.rs",
+      "line": 29,
+      "name": "hopr_strategy_closure_auto_finalization_count",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of channels where closure finalizing was initiated automatically",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_finalizer.rs#L29",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration",
+      "implementation": "legacy_strategy; do_not_assume_current_lifecycle_uses_this_instrument"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/pix/strategy.rs",
+      "line": 56,
+      "name": "hopr_strategy_pix_deposits_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of SSA deposits successfully sent by the Entry",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/pix/strategy.rs#L56",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/pix/strategy.rs",
+      "line": 61,
+      "name": "hopr_strategy_pix_deposits_rejected_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of SSA deposits refused because they exceed max_ssa_allocation",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/pix/strategy.rs#L61",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/pix/strategy.rs",
+      "line": 66,
+      "name": "hopr_strategy_pix_deposits_over_budget_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of SSA deposits refused because they would cross max_spend_per_window",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/pix/strategy.rs#L66",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/pix/strategy.rs",
+      "line": 71,
+      "name": "hopr_strategy_pix_deposits_failed_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of SSA deposits that failed after exhausting retries",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/pix/strategy.rs#L71",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/pix/strategy.rs",
+      "line": 76,
+      "name": "hopr_strategy_pix_deposit_data_total",
+      "type": "MultiCounter",
+      "labels": [
+        "outcome"
+      ],
+      "meaning": "Outcomes of the Exit asking its pool to generate PIX deposit data, per allocation",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/pix/strategy.rs#L76",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/pix/strategy.rs",
+      "line": 82,
+      "name": "hopr_strategy_pix_deposit_tracking_total",
+      "type": "MultiCounter",
+      "labels": [
+        "outcome"
+      ],
+      "meaning": "Outcomes of the Exit waiting for an SSA deposit to land",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/pix/strategy.rs#L82",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/pix/strategy.rs",
+      "line": 88,
+      "name": "hopr_strategy_pix_keys_recovered_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of SSA stealth address private keys reconstructed by the Exit",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/pix/strategy.rs#L88",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/pix/strategy.rs",
+      "line": 93,
+      "name": "hopr_strategy_pix_sweeps_total",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of recovered SSA deposits swept into the Exit's Safe",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/pix/strategy.rs#L93",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/pix/strategy.rs",
+      "line": 100,
+      "name": "hopr_strategy_pix_last_sweep_hopr",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "wxHOPR moved by the most recent SSA sweep, in base units",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/pix/strategy.rs#L100",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 102,
+      "name": "hopr_strategy_channel_lifecycle_opens",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of initiated channel opens",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L102",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 107,
+      "name": "hopr_strategy_channel_lifecycle_fundings",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of initiated channel fundings",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L107",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 112,
+      "name": "hopr_strategy_channel_lifecycle_closes",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of initiated channel closures",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L112",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 117,
+      "name": "hopr_strategy_channel_lifecycle_finalizations",
+      "type": "SimpleCounter",
+      "labels": [],
+      "meaning": "Count of initiated channel closure finalizations",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L117",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 127,
+      "name": "hopr_strategy_channel_lifecycle_required_safe_balance_hopr",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "wxHOPR the safe must hold to satisfy the demand of the most recent successful tick, in base units (may be stale if a required chain read fails)",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L127",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 135,
+      "name": "hopr_strategy_channel_lifecycle_effective_buckets",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Effective number of distinct (latency, subnet) bucket cells among open channels (2^H)",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L135",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 142,
+      "name": "hopr_strategy_channel_lifecycle_bucket_count",
+      "type": "MultiGauge",
+      "labels": [
+        "cell"
+      ],
+      "meaning": "Number of open channels in each (latency, subnet) bucket cell",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L142",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 150,
+      "name": "hopr_strategy_channel_lifecycle_latency_variance_ms",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Variance of round-trip times (ms) across all open channels",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L150",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 157,
+      "name": "hopr_strategy_channel_lifecycle_subnet_count",
+      "type": "SimpleGauge",
+      "labels": [],
+      "meaning": "Number of distinct subnet prefixes among open channels",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L157",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    },
+    {
+      "repo": "hoprnet/hopr-strategy",
+      "path": "src/channel_lifecycle/mod.rs",
+      "line": 165,
+      "name": "hopr_strategy_channel_lifecycle_score_axis",
+      "type": "MultiGauge",
+      "labels": [
+        "axis"
+      ],
+      "meaning": "Average per-axis score across open candidates in the last strategy tick",
+      "source_commit": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
+      "source_url": "https://github.com/hoprnet/hopr-strategy/blob/a8a79baa45c64ad66ade0e10124e27d828feb6a3/src/channel_lifecycle/mod.rs#L165",
+      "availability": "source_verified_feature_and_producer_dependent; deployed_release_not_verified",
+      "surface": "metric_exporter_subject_to_configuration"
+    }
+  ]
+}
