@@ -7,6 +7,7 @@ repositories. Each skill has one canonical copy in `plugins/hopr/skills/`.
 | --- | --- |
 | `concepts` | HOPR protocol concepts, RFCs, and implementation details for reasoning about the network. |
 | `release` | Plan and propagate Rust releases across HOPR repositories, including dependency repins. |
+| `debug` | Version-aware HOPR telemetry inventory and operational debugging for logs, metrics, traces, and support bundles. |
 
 The skills can also be selected automatically when relevant to a task. Review
 the release skill's instructions before performing operations that change
