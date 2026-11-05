@@ -26,6 +26,15 @@
       "metadata": {
         "version": "0.2.0"
       }
+    },
+    {
+      "name": "hopr-debug",
+      "description": "Version-aware HOPR telemetry inventory and incident debugging workflow for logs, metrics, traces and support bundles.",
+      "source": "./",
+      "skills": ["./tools/hopr-debug"],
+      "metadata": {
+        "version": "0.1.0"
+      }
     }
   ]
 }
