@@ -6,7 +6,7 @@ on:
       - main
   merge_group:
 concurrency:
-  group: test-hopr-release-${{ github.workflow }}-${{ github.ref }}
+  group: test-hopr-release-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 permissions: {}
 jobs:
