@@ -6,7 +6,7 @@ on:
       - main
   merge_group:
 concurrency:
-  group: test-hopr-release-${{ github.workflow }}-${{ github.ref }}
+  group: test-hopr-release-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 permissions: {}
 jobs:
@@ -33,3 +33,13 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Run the release-cascade tests
         run: python3 -I tools/hopr-release/scripts/test_release_cascade.py
+  merge-gate:
+    name: Merge gate
+    if: always()
+    needs: [unit]
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          jobs: ${{ toJSON(needs) }}
