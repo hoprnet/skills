@@ -4,7 +4,9 @@ Verified against the default-branch commits in [source-manifest.json](source-man
 on 2026-11-04. **Merged source is not proof of inclusion in a deployed release.**
 No production endpoint was contacted and no runtime capture was available for this
 preparation. Match the operator's binary/dependency versions and actual export first.
-Pending additions are separate in [pending-features.md](pending-features.md).
+The epic's linked PRs were reviewed separately on 2026-11-09 in
+[logging-changes.md](logging-changes.md); this metric catalog retains its original
+source snapshot. Pending additions are separate in [pending-features.md](pending-features.md).
 
 ## 1. Read surfaces before looking for individual signals
 
@@ -49,7 +51,7 @@ selected detail available compactly but does not make named lists exhaustive.
 
 | Group | Signals to locate in the captured version | Join keys and caution |
 |---|---|---|
-| Startup | `Node information`, node/build/settings, `OS network tuning specs`, `OpenTelemetry gate decision` | Node/process lifetime; settings and exporter gate explain missing data. |
+| Startup | Newer builds: `starting node` (`version`, `features`, `peer`, `chain_addr`), DEBUG `node configuration`, INFO `network information`; older builds: `Node information`; also `OS network tuning specs`, `OpenTelemetry gate decision` | Node/process lifetime; settings and exporter gate explain missing data. See hoprnet#8544 in the logging reference for exact fields. |
 | Chain feed | Subscription error/reconnect/status records; last successful chain update | Preserve subscription name when present. Repeated retry is not a successful update. Client and server connection identifiers can differ. |
 | Routing | Resolve failures, candidate/validation/cache messages, no-SURB routing waits | Destination/direction/hops, session parent, candidate set when available. Async queues can break context in older versions. |
 | SURB telemetry | `surb round-trip pair` with forward/reply, expected/observed; `surb round-trip flush tick` with legs/totals | Minted versus returned is comparative, not absolute delivery probability. Empty flushes can be TRACE-only. |

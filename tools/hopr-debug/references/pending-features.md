@@ -1,6 +1,6 @@
 # Pending additions: never assume deployed availability
 
-Status checked 2026-11-04. All PRs below were open at preparation. Re-check their
+Status checked 2026-11-09. All PRs below were open at review. Re-check their
 status, final schema and released dependency versions before using these signals
 as evidence. Commit hashes in [source-manifest.json](source-manifest.json) pin the
 reviewed proposal. They are not a recommendation to deploy Git overrides.
@@ -10,7 +10,7 @@ reviewed proposal. They are not a recommendation to deploy Git overrides.
 | Graph traversal scope | [hopr-impls#62](https://github.com/hoprnet/hopr-impls/pull/62) | Named graph traversal spans, returned count, duration and empty-result reason; observation details at TRACE | Published graph crate containing the final change and consumed by the binary |
 | Routing/session scope | [hoprnet#8604](https://github.com/hoprnet/hoprnet/pull/8604) | Nested routing/selector/graph records, candidate-set correlation, retained session scope across polls/queues/CPU work | Final transport/session integration and built-in dependency version; detailed records require TRACE-capable build |
 | Bounded collector/schema | [hopr-impls#76](https://github.com/hoprnet/hopr-impls/pull/76) | Shared collector, exact Safe reads, capped channel/peer/routing/SURB/probe summaries | Reporter started by embedding node with real producers, not merely a library dependency |
-| Runtime dump integration | [hoprnet#8614](https://github.com/hoprnet/hoprnet/pull/8614) | Managed periodic INFO `node_state` events and transport/probe observation wiring | Final hopr-lib/transport integration consumed by the application and reporting enabled |
+| Runtime dump integration | [hoprnet#8614](https://github.com/hoprnet/hoprnet/pull/8614) | Optional INFO reporter interfaces and transport/probe observers | Opt-in `hopr-lib/state-dump`, application-installed reporter factory, real producer wiring and reporting enabled |
 | Strategy-state observer | [hopr-strategy#130](https://github.com/hoprnet/hopr-strategy/pull/130) | Serializable strategy name/state snapshots | Application retains the observer and registers a dump section; not automatically wired by publishing the strategy crate |
 
 ## Periodic dump proposal
@@ -23,7 +23,12 @@ The inspected collector and host docs describe:
 - One managed INFO event per interval, including idle intervals, with
   `.fields.event == "node_state"` and a JSON string in `.fields.state` when encoded
   through the inspected tracing JSON formatter. Reporter cancellation belongs to
-  the host's process list. No `state-dump` Cargo feature is required by this proposal.
+  the host's process list. The current proposal requires the opt-in
+  `hopr-lib/state-dump` Cargo feature (disabled by default) and an application
+  calling `HoprBuilderConfigured::with_state_dump` with a `StateDumpFactory`.
+  Interfaces do not install a connector or reporter. `prepare` validates config;
+  `create` supplies the optional observer and lazy reporting future. The interval
+  policy describes the reference adapter; custom reporters can behave differently.
 - A **32 KiB JSON payload** cap in the inspected implementation, excluding logger
   envelope; an older PR description says 24 KiB. Use the final code/schema, not
   that stale description, when validating the limit.
@@ -51,6 +56,14 @@ The inspected collector and host docs describe:
 - Up to four optional named sections, each capped at 2 KiB. Oversized sections
   become a `too_large` marker. A strategy observer reports operational state,
   **not** the exact budget/reason behind a `fund pass stopped` warning.
+- The graph proposal retains graph-wide counts and at most eight incident local
+  edges, plus four unique directed edges from at most 32 supplied path arrays.
+  Null observations differ from observed zero. A shared 3 KiB graph budget has
+  explicit omitted counts.
+- Graph `searches` retain cumulative search/empty counts and at most two query
+  examples. Snapshot reads do not reset them; do not confuse these with interval
+  counters. `selection_id`, `search_id`, phase and decision-time observations
+  identify a query. IDs are process-local: join with node identity and lifetime.
 
 Given a confirmed compatible capture, extract JSON without replacing the raw log:
 
@@ -79,6 +92,16 @@ Follow graph query → candidates → validation/cache set → selected route wi
 available identifiers. Trace logging that was compiled out cannot be enabled by
 `RUST_LOG` after the fact. A complete local session tree also does not demonstrate
 cross-node distributed trace propagation; prove that separately from actual data.
+
+Keep the proposals separate: hopr-impls#62 adds one DEBUG traversal completion per
+query; the newer hopr-impls#76 moves traversal spans/completions to TRACE, logs
+`graph_search_failure` at DEBUG at most once per minute per shared graph, and
+emits no routine DEBUG records for successful traversals. Its INFO graph section
+retains cumulative search counts, bounded examples and suppressed DEBUG counts.
+TRACE records carry `selection_id`, `search_id`, phase and candidate identity;
+`graph.edge_value` adds `edge_evaluation_id` around value-function evaluation.
+The graph's `value_below_minimum` result does not explain opaque caller policy;
+only matched decision-time policy records can supply that explanation.
 
 ## Promotion checklist after releases
 

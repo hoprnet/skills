@@ -10,9 +10,14 @@ Record application/worker and crate versions, process restarts, network, node
 PeerId/offchain key/chain address, Safe address, active configuration, available
 files, and timestamp offsets. Distinguish entry/client, relay, and exit roles.
 
-Look for startup `node information`, `hopr_lib_version`, and settings records
-when that build supplies them. A crate version in Cargo.toml is not proof of
-what is running; prefer the capture's build identity and deployment provenance.
+For builds containing hoprnet#8544, look for `starting node` with `version`,
+`features`, `peer` and `chain_addr`; `network information` carries the network and
+ticket minimums. Full `node configuration` is DEBUG. Older builds can emit
+`Node information` and `hopr_lib_version` instead. The new INFO line does not
+contain the full settings or Safe/module binding described in the original PR
+body. A crate version in Cargo.toml is not proof of what is running; prefer the
+capture's build identity and deployment provenance. See
+[the reviewed log contracts](logging-changes.md).
 
 For JSON logs, select a session without losing ancestor fields:
 
@@ -33,6 +38,12 @@ selection finds records containing the key; it cannot reconstruct missing spans.
 - Inspect component status and the last successful chain update. Subscription
   retries, reconnects and explicit degraded status are evidence of feed problems.
   A snapshot can look plausible while its underlying chain cache is stale.
+- With blokli-client#60 and hopr-impls#54, keepalives count as traffic, the default
+  stall threshold is 90 seconds, and the connector checks six subscription handles
+  every five seconds. `Stalled`, `Rejected` or `Ended` degrades a ready chain;
+  a brief retry/degraded client state does not. A permanently ended stream can
+  make the chain unavailable. Server close records are INFO only for connections
+  that carried GraphQL errors; other closes are DEBUG (blokli#554).
 - `/readyz` and `/healthyz` are limited predicates. In the pinned HOPRd source,
   readiness allows a degraded chain that is not unavailable; health checks node
   running/connectivity, not chain freshness. Do not use HTTP 200 to rule out a
@@ -116,6 +127,15 @@ not proof that the historic unbounded-retry defect is present in this version.
   aggregate incomplete/discard/duplicate summaries and sampled frame counters.
   Do not treat a frame-ID range as an exact delivered-frame denominator without
   checking wrap, gaps, retransmissions and session boundaries.
+- In hoprnet#8509 builds, `session frames dropped in the last window` reports
+  `emitted`, `discarded`, `not_reassembled`, `duplicates` and `window_s`. It is
+  emitted on activity after at least 30 seconds, or at drop, only when there is
+  frame loss. Counts overlap and duplicate counts measure segments.
+- A burst of identical `unparseable packet` errors on an older build can be the
+  same malformed buffered message decoded repeatedly (hoprnet#8574). The fix
+  consumes malformed messages with a trusted boundary; invalid version/length
+  terminates the reader with `invalid session header; terminating session reader`.
+  Do not count repeated legacy errors as distinct bad network packets.
 - `hopr_session_*` instruments exist in source but HOPRd's REST `/metrics` removes
   that prefix. Check the OTLP metrics path or the embedding session snapshot API;
   do not conclude that there are no sessions from an absent REST series.

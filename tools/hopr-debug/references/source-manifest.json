@@ -18,22 +18,204 @@
     "hopr-impls#76": {
       "url": "https://github.com/hoprnet/hopr-impls/pull/76",
       "state": "open",
-      "head": "e4066d24b14c988e01f93f8482650a23d27b382b"
+      "head": "02deb96e58e5a6a6286100b077bfe0d5e7b3f4c9"
     },
     "hoprnet#8604": {
       "url": "https://github.com/hoprnet/hoprnet/pull/8604",
       "state": "open",
-      "head": "e7057eb810460a9e6d8a0f9aba5b636225190972"
+      "head": "33498c24abcba6b9d7a6745228484f2d87e43b07"
     },
     "hoprnet#8614": {
       "url": "https://github.com/hoprnet/hoprnet/pull/8614",
       "state": "open",
-      "head": "f64e438bea50abca5a08479f87b7fda664821a37"
+      "head": "bd1c4d994110b5e0726627abd0be04ada2bb4b3e"
     },
     "hopr-strategy#130": {
       "url": "https://github.com/hoprnet/hopr-strategy/pull/130",
       "state": "open",
-      "head": "6046cef038204d93ba1ed3be5c1734b488fea7ea"
+      "head": "b5891e727e2c71ef78c300126328592b61bbeb5f"
     }
+  },
+  "pr_review": {
+    "checked_at": "2026-11-09",
+    "epic": "https://github.com/hoprnet/hoprnet/issues/8456",
+    "skill_base": {
+      "url": "https://github.com/hoprnet/skills/pull/9",
+      "head": "dfa41addc8871e99da01671a497e8f2c612d2439"
+    },
+    "scope": "Epic timeline and all 13 current sub-issue timelines; linked PR descriptions and changed-file patches. The metric catalog retains its separately dated source snapshot. No real-log end-to-end validation performed.",
+    "pull_requests": [
+      {
+        "repository": "hoprnet/zelus",
+        "number": 14,
+        "url": "https://github.com/hoprnet/zelus/pull/14",
+        "state": "closed",
+        "merged_at": "2026-09-30T14:51:02Z",
+        "head": "213ade4b8466ba3f81f4c506bdefcdf181fa8fc9",
+        "merge_commit": "ad072ea171b9f592121afa36ce8fbce85e4e6631"
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8509,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8509",
+        "state": "closed",
+        "merged_at": "2026-10-16T14:58:40Z",
+        "head": "dec26911e9af80c1af3b6d837682f85e41e6829c",
+        "merge_commit": "15577f3c5374e83c339ee3fd8ff0afb2c69be01d"
+      },
+      {
+        "repository": "hoprnet/hopr-integration-tests",
+        "number": 73,
+        "url": "https://github.com/hoprnet/hopr-integration-tests/pull/73",
+        "state": "closed",
+        "merged_at": "2026-11-03T10:31:29Z",
+        "head": "5b2649f64d0ad6f893d5ea056c78ba9e20c9273c",
+        "merge_commit": "f2230ad657a82f006b6b1db2dcafa72ab5f5a003"
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8544,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8544",
+        "state": "closed",
+        "merged_at": "2026-11-02T12:20:24Z",
+        "head": "0bf085839660184c0ea6a88046b3cf4c41c4325c",
+        "merge_commit": "3d79bbfa50a2bbbadf6d3cc03a0845aacdd0841a"
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8549,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8549",
+        "state": "closed",
+        "merged_at": "2026-10-27T23:27:33Z",
+        "head": "34a269c0b5e716faa0fb7370193c454eb16a4f05",
+        "merge_commit": "4a2ea38b55c3a29b874b3ee311083c64a0138cce"
+      },
+      {
+        "repository": "hoprnet/blokli",
+        "number": 554,
+        "url": "https://github.com/hoprnet/blokli/pull/554",
+        "state": "closed",
+        "merged_at": "2026-10-29T11:59:40Z",
+        "head": "2f99d4cee16f01ae6a336c15b159e3914d904f22",
+        "merge_commit": "8b9b0861416d3005c6a218f7057deb9f1312741a"
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8557,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8557",
+        "state": "closed",
+        "merged_at": "2026-10-26T17:07:03Z",
+        "head": "c52c0025e2a1629079a4302d784f37e243011248",
+        "merge_commit": "af80993c9f7d20b1f277af6efacaeb05190698be"
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8574,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8574",
+        "state": "closed",
+        "merged_at": "2026-11-02T21:07:10Z",
+        "head": "fbc2e493c7e8a5914b807fb5b8fe5f3bfd5c63b5",
+        "merge_commit": "fc047226bfe80f8e340bb8e5187c8d4fcd23b447"
+      },
+      {
+        "repository": "hoprnet/hopr-impls",
+        "number": 62,
+        "url": "https://github.com/hoprnet/hopr-impls/pull/62",
+        "state": "open",
+        "merged_at": null,
+        "head": "55495f1432098d63b097667470d13bf0d556dfdc",
+        "merge_commit": null
+      },
+      {
+        "repository": "hoprnet/hopr-strategy",
+        "number": 108,
+        "url": "https://github.com/hoprnet/hopr-strategy/pull/108",
+        "state": "closed",
+        "merged_at": "2026-10-28T14:27:33Z",
+        "head": "49bc4f8dfd007ab12e6c04e711125bc8f6106040",
+        "merge_commit": "89b2a193732675d097d66a108ad9df39dd1841d8"
+      },
+      {
+        "repository": "hoprnet/hopr-utilities",
+        "number": 46,
+        "url": "https://github.com/hoprnet/hopr-utilities/pull/46",
+        "state": "closed",
+        "merged_at": "2026-10-20T22:05:12Z",
+        "head": "9863e16bba18738f0081e0dbbbc4296232bd7d81",
+        "merge_commit": "ebe45322c958ef6b8f4da5d22381561ee84fd37c"
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8575,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8575",
+        "state": "closed",
+        "merged_at": null,
+        "head": "4fa6a3a781c40e1d7241ec770f746bd53336300c",
+        "merge_commit": null
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8604,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8604",
+        "state": "open",
+        "merged_at": null,
+        "head": "33498c24abcba6b9d7a6745228484f2d87e43b07",
+        "merge_commit": null
+      },
+      {
+        "repository": "hoprnet/hopr-integration-tests",
+        "number": 29,
+        "url": "https://github.com/hoprnet/hopr-integration-tests/pull/29",
+        "state": "closed",
+        "merged_at": null,
+        "head": "8a4b6e18555f5fdd5dbdf96955a7b0eb0b27d953",
+        "merge_commit": null
+      },
+      {
+        "repository": "hoprnet/blokli-client",
+        "number": 60,
+        "url": "https://github.com/hoprnet/blokli-client/pull/60",
+        "state": "closed",
+        "merged_at": "2026-10-27T16:44:29Z",
+        "head": "81432515dc4b74aa17ee121091be0067d0f5ae94",
+        "merge_commit": "40d2cec49853cfcefa27ae85468997f6047664b4"
+      },
+      {
+        "repository": "hoprnet/hopr-impls",
+        "number": 54,
+        "url": "https://github.com/hoprnet/hopr-impls/pull/54",
+        "state": "closed",
+        "merged_at": "2026-11-03T08:58:12Z",
+        "head": "95d23c72118d4813d5594214f8e913308b277cfa",
+        "merge_commit": "36fd2732cb489cee4624e1dc7705947044639888"
+      },
+      {
+        "repository": "hoprnet/hopr-impls",
+        "number": 76,
+        "url": "https://github.com/hoprnet/hopr-impls/pull/76",
+        "state": "open",
+        "merged_at": null,
+        "head": "02deb96e58e5a6a6286100b077bfe0d5e7b3f4c9",
+        "merge_commit": null
+      },
+      {
+        "repository": "hoprnet/hopr-strategy",
+        "number": 130,
+        "url": "https://github.com/hoprnet/hopr-strategy/pull/130",
+        "state": "open",
+        "merged_at": null,
+        "head": "b5891e727e2c71ef78c300126328592b61bbeb5f",
+        "merge_commit": null
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8614,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8614",
+        "state": "open",
+        "merged_at": null,
+        "head": "bd1c4d994110b5e0726627abd0be04ada2bb4b3e",
+        "merge_commit": null
+      }
+    ]
   }
 }

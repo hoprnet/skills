@@ -13,7 +13,8 @@ description: >
 
 Prepared for [hoprnet#8410](https://github.com/hoprnet/hoprnet/issues/8410), under
 [hoprnet#8456](https://github.com/hoprnet/hoprnet/issues/8456). Source verification:
-2026-11-04. This skill reads evidence; it does not change node settings or state.
+metric inventory 2026-11-04; linked PR review 2026-11-09. This skill reads evidence;
+it does not change node settings or state.
 
 ## Start here
 
@@ -22,7 +23,9 @@ Prepared for [hoprnet#8410](https://github.com/hoprnet/hoprnet/issues/8410), und
    features, log filter, capture period, and restart boundaries. Do not apply a
    pending-PR schema to an older release. Source verification against a default
    branch does not establish that a deployed release includes that code.
-2. Read [the available surfaces and metric inventory](references/telemetry-inventory.md).
+2. Read [the epic's logging changes](references/logging-changes.md) for exact
+   messages, levels, capture instructions and merged versus pending availability.
+   Then read [the available surfaces and metric inventory](references/telemetry-inventory.md).
    The companion [JSON catalog](references/metric-catalog.json) records exact
    instrument names, declared types, labels, meanings, and immutable source links.
 3. Read the symptom's section in [the debugging workflow](references/debugging-workflow.md).
@@ -30,7 +33,9 @@ Prepared for [hoprnet#8410](https://github.com/hoprnet/hoprnet/issues/8410), und
    observations here do not override RFCs or version-specific source.
 4. Check [pending features](references/pending-features.md) before interpreting a
    `node_state` dump, new graph spans, or strategy-state snapshots. These were
-   open PRs when this document was prepared, not baseline guarantees.
+   open PRs at the latest PR review, not baseline guarantees. The dump proposal now
+   requires the opt-in `hopr-lib/state-dump` feature and an application-installed
+   reporter; an environment variable alone does not enable it.
 5. Produce a finding with the evidence contract below. An unavailable signal is
    a limitation to record, not permission to manufacture its value.
 
@@ -43,6 +48,10 @@ Prepared for [hoprnet#8410](https://github.com/hoprnet/hoprnet/issues/8410), und
 - Read a complete relevant window, including startup/reconnect and recovery,
   before treating repeated lines as independent failures. Count events and
   unique affected sessions separately.
+- Frame-loss summaries are event-driven windows of at least 30 seconds, plus a
+  final flush when dropped. `discarded` and `not_reassembled` may describe the same
+  frame; `duplicates` counts segments. Do not add these as independent losses or
+  interpret a missing idle-window summary as zero loss.
 - Join session records by `session_id` plus node/process lifetime. Join channel
   events by direction, channel identity, and epoch where present. PeerId,
   offchain key, chain address, pseudonym, and SURB path slot are different keys;
