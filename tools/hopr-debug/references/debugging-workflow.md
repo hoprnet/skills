@@ -10,7 +10,7 @@ Record application/worker and crate versions, process restarts, network, node
 PeerId/offchain key/chain address, Safe address, active configuration, available
 files, and timestamp offsets. Distinguish entry/client, relay, and exit roles.
 
-Look for startup `Node information`, `hopr_lib_version`, and settings records
+Look for startup `node information`, `hopr_lib_version`, and settings records
 when that build supplies them. A crate version in Cargo.toml is not proof of
 what is running; prefer the capture's build identity and deployment provenance.
 
