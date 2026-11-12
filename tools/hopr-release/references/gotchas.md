@@ -1,5 +1,29 @@
 # Cascade gotchas
 
+## A bot account does not identify the owning session
+
+Several sessions can use `augmentcode[bot]` and `chore/release-cascade-*` branches.
+A fresh router's empty `worker-list` only lists that router's children.
+Neither fact permits another writer. Reserve one shared owner before launch.
+See [coordination.md](coordination.md) for atomic claims, inbox routing, and handover.
+Use one operation per repo/base across git-pin and published-version plan changes.
+
+Never amend or force-push a cascade repair. Inspect the current remote SHA, preserve
+its commits, and use the guarded additive push. Treat PR events as wake-up signals;
+fetch current PR and check state before acting. Track CI by source SHA, harness SHA,
+workflow run ID, and attempt. A superseded cancellation is not a code failure.
+
+Keep a parent release active until all requested targets finish. A successful temporary
+check does not finish that release. Record successful crate publication separately
+from later build, tag, and notification failures. Do not request publication twice.
+
+## Credential helper diagnostics can contain credentials
+
+Git expects a credential helper to emit named fields, not a bare token.
+Do not replace the installed helper or print its output. Use refreshable credentials
+inside the process, never argv or URLs. Do not echo raw git or token-command diagnostics.
+If a token reaches a log, report the location without its value and request rotation.
+
 ## Squash-merge erases the feature SHA
 
 GitHub squash-merge creates a new commit on the target branch and discards the

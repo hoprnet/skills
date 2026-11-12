@@ -54,6 +54,21 @@ confirm the real commit you are pinning to against the branch it must live on.
 
 Full step-by-step with the repo and branch map: [references/procedure.md](references/procedure.md).
 
+## Coordinated agent runs
+
+Read [references/coordination.md](references/coordination.md) before automating shared PR writes.
+Use the CAS registry in `scripts/cascade_state.py`, not a local lock or `runs.md` entry.
+The registry reserves one owner session and one operation per repo/base across all routers.
+A matching bot author or branch prefix is not ownership. Keep one operation across plan changes.
+
+Managed runs pass `--cascade-run`, `--owner-session`, `--generation`, and
+`--coordination-prefix` to the deployed `release-cascade.py`. They reuse the operation's
+registered PR and never close sibling PRs. Unknown existing cascade PRs block creation.
+A managed process with `AUGMENT_VFS_DIR` cannot use `--execute-no-release` without ownership.
+Unmanaged interactive use retains the legacy behavior; it is not a concurrency guarantee.
+Never bypass the registry with a direct push. Add repair commits using the guarded `push`
+command with the reviewed remote SHA. It rejects changed heads and missing remote commits.
+
 ## Releasing with the script
 
 `scripts/release-cascade.py` plans and runs the crates.io part of the cascade for one start
