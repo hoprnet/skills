@@ -503,6 +503,111 @@ class GitFlow(unittest.TestCase):
         self.assertEqual(self.forge.prs, [])
         self.assertEqual(self.cmds, [])
 
+    def coordinated(self):
+        import copy
+        helper_spec = importlib.util.spec_from_file_location("state", Path(__file__).with_name("cascade_state.py"))
+        helper = importlib.util.module_from_spec(helper_spec)
+        helper_spec.loader.exec_module(helper)
+
+        class Store:
+            state = dict(version=1, runs={}, routes={}, events={}, resources={})
+            sequence = 0
+
+            def read(self):
+                return copy.deepcopy(self.state), self.sequence
+
+            def write(self, state, sequence):
+                if sequence != self.sequence:
+                    raise helper.Conflict("sequence_conflict")
+                self.state, self.sequence = copy.deepcopy(state), self.sequence + 1
+
+        registry = helper.Registry(Store())
+        run_id = registry.route("topic", "router", "event", ["hoprnet/edge-client@release/4.1"])["run_id"]
+        registry.bind(run_id, "router", "owner")
+        client = rc.CascadeCoordination.__new__(rc.CascadeCoordination)
+        client.registry, client.owner = registry, (run_id, "owner", 1)
+        return client, helper
+
+    def test_managed_plan_changes_reuse_one_registered_pr_without_closing_siblings(self):
+        from unittest.mock import patch
+        client, _ = self.coordinated()
+        with patch.object(rc, "COORDINATION", client):
+            result = rc.apply_op(ApplyOps().op(), ("edge-client", "release/4.1"), shell=self.stub_shell)
+            self.forge.open_prs = [self.open_pr(5, "chore/release-cascade-repin-aaaa1111")]
+            changed = ApplyOps().op(git_updates=[dict(repo="hoprnet", branch="main", crates=["hopr-lib"], locked="old", head="new")])
+            self.forge.pr_state = lambda repo, number: "open"
+            second = rc.apply_op(changed, ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertEqual(second["url"], result["url"])
+        self.assertEqual(len(self.forge.prs), 1)
+        self.assertEqual(self.forge.closed_prs, [])
+        self.assertEqual(result["superseded"], [])
+        body = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "log", "-1", "--format=%B", result["branch"]).stdout
+        self.assertIn("<!-- rust-cascade run=", body)
+
+    def test_managed_unknown_cascade_pr_blocks_creation(self):
+        from unittest.mock import patch
+        client, _ = self.coordinated()
+        self.forge.open_prs = [self.open_pr(5, "chore/release-cascade-repin-aaaa1111")]
+        with patch.object(rc, "COORDINATION", client), self.assertRaisesRegex(rc.Stop, "unregistered cascade PR"):
+            rc.apply_op(ApplyOps().op(), ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertEqual((self.forge.prs, self.forge.closed_prs, self.cmds), ([], [], []))
+
+    def test_managed_stale_owner_cannot_create_or_close_pr(self):
+        from unittest.mock import patch
+        client, helper = self.coordinated()
+        client.registry.handover(*client.owner, "next-owner")
+        with patch.object(rc, "COORDINATION", client), self.assertRaises(helper.CoordinationError):
+            rc.apply_op(ApplyOps().op(), ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertEqual((self.forge.prs, self.forge.closed_prs, self.cmds), ([], [], []))
+
+    def test_guarded_format_push_preserves_a_competing_remote_commit(self):
+        import subprocess
+        from unittest.mock import patch
+        client, helper = self.coordinated()
+        resource = "hoprnet/hopr-api@main"
+        client.registry.claim_operation(*client.owner, resource)
+        branch = "chore/release-cascade-format"
+        clone = self.repo
+        self.sh("git", "-C", str(clone), "checkout", "-qb", branch)
+        self.sh("git", "-C", str(clone), "push", "-q", "origin", branch)
+        reviewed = self.sh("git", "-C", str(clone), "rev-parse", "HEAD").stdout.strip()
+        other = self.tmp / "other-writer"
+        self.sh("git", "clone", "-q", "--branch", branch, str(self.tmp / "origin.git"), str(other))
+        self.sh("git", "-C", str(other), "config", "user.name", "Other writer")
+        self.sh("git", "-C", str(other), "config", "user.email", "other@example.test")
+        (other / "competing.txt").write_text("preserve this commit\n")
+        self.sh("git", "-C", str(other), "add", "competing.txt")
+        self.sh("git", "-C", str(other), "commit", "-qm", "competing change")
+        self.sh("git", "-C", str(other), "push", "-q", "origin", branch)
+        competing = self.sh("git", "-C", str(other), "rev-parse", "HEAD").stdout.strip()
+        (clone / "format.txt").write_text("local formatting\n")
+        self.sh("git", "-C", str(clone), "add", "format.txt")
+        self.sh("git", "-C", str(clone), "commit", "-qm", "format")
+        actual_run = subprocess.run
+
+        def transport(argv, **kwargs):
+            if argv[-3:] == ["remote", "get-url", "origin"]:
+                return subprocess.CompletedProcess(argv, 0, "https://github.com/hoprnet/hopr-api.git\n", "")
+            return actual_run(argv, **kwargs)
+
+        with patch.object(helper.subprocess, "run", side_effect=transport):
+            with self.assertRaisesRegex(helper.CoordinationError, "remote_head_changed"):
+                client.registry.push(*client.owner, resource, str(clone), branch, reviewed, "format-" + reviewed)
+        remote = self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "rev-parse", branch).stdout.strip()
+        self.assertEqual(remote, competing)
+        self.assertEqual(self.sh("git", "--git-dir", str(self.tmp / "origin.git"), "show", branch + ":competing.txt").stdout,
+                         "preserve this commit\n")
+
+    def test_managed_failed_pr_creation_keeps_an_uncertain_marker(self):
+        from unittest.mock import patch
+        client, helper = self.coordinated()
+        with patch.object(rc, "COORDINATION", client), patch.object(self.forge, "create_pr", side_effect=rc.Stop("network failure")):
+            with self.assertRaises(rc.Stop):
+                rc.apply_op(ApplyOps().op(), ("edge-client", "release/4.1"), shell=self.stub_shell)
+        self.assertIsNotNone(client.registry.check(*client.owner)["mutation"])
+        with self.assertRaises(helper.CoordinationError):
+            client.registry.handover(*client.owner, "next-owner")
+
 
 class GitPins(unittest.TestCase):
     ms = {"Cargo.toml": {
@@ -590,6 +695,18 @@ class PinOperations(unittest.TestCase):
 
 
 class Resume(unittest.TestCase):
+    def test_managed_resume_retains_ownership_without_publishing(self):
+        from unittest.mock import patch
+        args = RunSettings().ns(cascade_run="run", owner_session="owner", generation=3,
+                                coordination_prefix="/vfs/org")
+        flags = rc.resume_flags(args)
+        with patch.object(rc, "COORDINATION", object()), patch.object(rc, "RESUME_FLAGS", flags):
+            command = rc.resume_command(("hoprd", "main"))
+        self.assertIn("--cascade-run run --owner-session owner --generation 3", command)
+        self.assertIn("--coordination-prefix /vfs/org", command)
+        self.assertTrue(command.endswith("--execute-no-release"))
+        self.assertNotIn("--execute", command.split())
+
     def test_resume_keeps_the_flags_that_shape_the_run(self):
         saved = rc.RESUME_FLAGS
         try:
@@ -1623,12 +1740,13 @@ class TokenSources(unittest.TestCase):
         with self.assertRaises(rc.Stop):
             src.get()
 
-    def test_a_failing_command_reports_its_stderr_and_never_its_output(self):
+    def test_a_failing_command_suppresses_both_diagnostic_streams(self):
         src, _, _ = self.source(cmd="print-token", outputs=[(3, "SECRET-OUTPUT", "helper: not logged in\nmore")])
         with self.assertRaises(rc.Stop) as e:
             src.get()
         self.assertIn("exit 3", str(e.exception))
-        self.assertIn("helper: not logged in", str(e.exception))
+        self.assertNotIn("helper: not logged in", str(e.exception))
+        self.assertIn("exit 3", str(e.exception))
         self.assertNotIn("SECRET-OUTPUT", str(e.exception))
 
     def test_no_token_or_more_than_one_line_is_an_error(self):
