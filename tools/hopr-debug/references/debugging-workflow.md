@@ -56,7 +56,9 @@ selection finds records containing the key; it cannot reconstruct missing spans.
 
 ## 3. Channel funding: the original high-value signals
 
-Read edge `balance`, `is_connected` and `probe_success_rate` together. Then inspect
+Read edge `balance`, `is_connected` and probe measurements together (current dumps
+use `immediate_probe_rate`/`intermediate_probe_rate`; older records may expose
+`probe_success_rate`). Then inspect
 `channel-lifecycle: fund pass stopped` records and their attached budget fields.
 Use the captured winning-ticket face value/funding policy and channel direction;
 an incoming channel is funded by its counterparty. Do not hardcode a historical
@@ -68,8 +70,9 @@ allowance can still prevent funding. A warning about funding is not evidence tha
 an already usable channel stopped working, and a quiet legacy strategy metric is
 not evidence that the current lifecycle strategy never ran.
 
-Current baseline can require graph DEBUG observations plus strategy warnings.
-Pending state dumps supply capped samples, not every channel; use omitted/error
+Current graph observations require retained TRACE, or an installed component reporter;
+rate-limited DEBUG failures and strategy warnings supply different evidence.
+Optional component state dumps supply capped samples, not every channel; use omitted/error
 counts before concluding that a particular channel is healthy or absent.
 
 ## 4. Path-health: separate search, validation, cache and selection
@@ -84,7 +87,7 @@ counts before concluding that a particular channel is healthy or absent.
   not proof that the path with the best apparent metric must always be selected.
 - A graph completion reason such as `no_eligible_paths` can describe an empty
   result without identifying the individual rejected edge or its cause.
-- With pending correlated diagnostics, follow candidate-set identifiers and
+- With compatible merged routing diagnostics, follow candidate-set identifiers and
   selection records. Actual draws/weights may be TRACE-only; mark them unknown
   if this build compiled TRACE out.
 
@@ -101,6 +104,18 @@ attributing causality. Probe success and successful application forwarding are
 different observations; a connected socket is not proof of packet delivery.
 
 ## 6. SURBs and the reply direction
+
+In builds containing [hoprnet#8694](https://github.com/hoprnet/hoprnet/pull/8694),
+the relayer-health decision distinguishes replies arriving directly from the
+counterparty from those arriving through another relayer. Delivery over one hop
+does not establish that the other hop works. A one-hop suspicion must persist
+to a later flush before a verdict is acted on; a later reply must be fresh and
+arrive over the affected hop to revive that verdict. If two relayers cannot be
+distinguished from the overdue replies, the decision can be deferred. Compare
+`relayer judged dead` (`relayer`, optionally `over`) with the DEBUG explanation
+records and actual path/capture coverage. This is a version-specific inference,
+not proof of the root cause of every timeout.
+[Decision source](https://github.com/hoprnet/hoprnet/blob/ff0076efaa58655e282ee7e2fa6b685ecd330a5d/transport/hopr/src/protocol/surb_telemetry.rs).
 
 Use `surb round-trip pair` details and the aggregate `surb round-trip flush tick`
 when present. Compare siblings serving the same destination in a common window.
@@ -143,6 +158,17 @@ not proof that the historic unbounded-retry defect is present in this version.
   shares, phase latency, stalled reason, deposits/recoveries and cycle closure.
   Match the event/role/phase labels. A retransmitted SSA request is not a newly
   opened cycle. Packet-layer ticket revenue does not pay the final destination.
+- Curvy PIX: `unreadable Curvy committed replay floor; replaying from genesis`
+  indicates a failed floor read and a conservative replay, not a proven missing
+  deposit. `keeping an unfinished Curvy replay because the sampled head does not
+  cover its window` is DEBUG and means the replay remains scheduled. A failed
+  catch-up warning includes `replayed` and `retry_in`; inspect later recovery and
+  indexer freshness. Newer embedders can supply a custom HTTP client for Curvy
+  relayer and indexer traffic; this client does not carry Blokli traffic. Check
+  the `custom_http_client` field on `Curvy PIX deposit pool ready` before assuming
+  which transport was used.
+  [Lifecycle](https://github.com/hoprnet/hopr-strategy/blob/de958cb79faf5c165cded725904ba7efc6edb371/src/pix/pools/curvy/lifecycle.rs),
+  [pool setup](https://github.com/hoprnet/hopr-strategy/blob/de958cb79faf5c165cded725904ba7efc6edb371/src/pix/pools/curvy/mod.rs).
 
 ## 8. Throughput, runtime and OS pressure
 

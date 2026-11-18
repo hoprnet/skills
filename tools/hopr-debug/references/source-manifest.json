@@ -1,41 +1,14 @@
 {
-  "checked_at": "2026-11-04",
+  "checked_at": "2026-11-18",
   "sources": {
-    "hoprnet/hoprnet": "13c4c81611e472e874484c1f21a083c3840629dc",
-    "hoprnet/hoprd": "2d3ee8925c2ad913801c771b574f922bd9e84fec",
-    "hoprnet/hopr-impls": "36fd2732cb489cee4624e1dc7705947044639888",
-    "hoprnet/hopr-strategy": "a8a79baa45c64ad66ade0e10124e27d828feb6a3",
-    "hoprnet/hopr-utilities": "1d433273a441e038f4f62f95b14a56c6ee206782",
-    "hoprnet/hopr-types": "1f8cd38664d6c8c1fe6b342b2dd0f36c8fcfde48",
-    "hoprnet/skills": "c0ac59dee96bda661e03b9d53b44dd92f9f68fbd"
+    "hoprnet/hoprnet": "ff0076efaa58655e282ee7e2fa6b685ecd330a5d",
+    "hoprnet/hopr-impls": "fa551bdff192d91dd7a783c8905903105817e935",
+    "hoprnet/hopr-strategy": "de958cb79faf5c165cded725904ba7efc6edb371",
+    "hoprnet/hopr-types": "7498c1b701d7ec188c1a0f1edab4674b9f34b67b",
+    "hoprnet/hoprd": "097d1b80ef6fc69ff2c554bf3eab62d692e66cc1",
+    "hoprnet/hopr-utilities": "c404d77f7cbd855147e4baba93322d759cbf024d"
   },
-  "pending": {
-    "hopr-impls#62": {
-      "url": "https://github.com/hoprnet/hopr-impls/pull/62",
-      "state": "open",
-      "head": "55495f1432098d63b097667470d13bf0d556dfdc"
-    },
-    "hopr-impls#76": {
-      "url": "https://github.com/hoprnet/hopr-impls/pull/76",
-      "state": "open",
-      "head": "02deb96e58e5a6a6286100b077bfe0d5e7b3f4c9"
-    },
-    "hoprnet#8604": {
-      "url": "https://github.com/hoprnet/hoprnet/pull/8604",
-      "state": "open",
-      "head": "33498c24abcba6b9d7a6745228484f2d87e43b07"
-    },
-    "hoprnet#8614": {
-      "url": "https://github.com/hoprnet/hoprnet/pull/8614",
-      "state": "open",
-      "head": "bd1c4d994110b5e0726627abd0be04ada2bb4b3e"
-    },
-    "hopr-strategy#130": {
-      "url": "https://github.com/hoprnet/hopr-strategy/pull/130",
-      "state": "open",
-      "head": "b5891e727e2c71ef78c300126328592b61bbeb5f"
-    }
-  },
+  "pending": {},
   "pr_review": {
     "checked_at": "2026-11-09",
     "epic": "https://github.com/hoprnet/hoprnet/issues/8456",
@@ -217,5 +190,228 @@
         "merge_commit": null
       }
     ]
+  },
+  "telemetry_review": {
+    "checked_at": "2026-11-18",
+    "scope": "Static lexical metric and log/span scan of six pinned default branches; manual review of changes since 2026-11-17, including SURB relayer health and Curvy PIX lifecycle. No production capture or build validation; feature gates and scan exclusions apply.",
+    "pull_requests": [
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8604,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8604",
+        "state": "closed",
+        "merged_at": "2026-11-13T13:12:15Z",
+        "head": "b46e0fe061c68323d65a93e68fa31da6663010d4",
+        "merge_commit": "3f8144d3bf70d1c4ccebcc4955e05a8576795f52"
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8614,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8614",
+        "state": "closed",
+        "merged_at": "2026-11-14T10:38:55Z",
+        "head": "8e82f93712d3e06b5ba4a3f0cfa8bc65cf219d9e",
+        "merge_commit": "31d2dc4be783900a5f49d81d14ff0d808bdcbeaf"
+      },
+      {
+        "repository": "hoprnet/hopr-impls",
+        "number": 62,
+        "url": "https://github.com/hoprnet/hopr-impls/pull/62",
+        "state": "closed",
+        "merged_at": "2026-11-11T11:35:14Z",
+        "head": "44adf18311dcdcb28de415976e10c3bf464e85e7",
+        "merge_commit": "6757ebf02df41d33984b768e3d544bcc9d4f7cbd"
+      },
+      {
+        "repository": "hoprnet/hopr-impls",
+        "number": 76,
+        "url": "https://github.com/hoprnet/hopr-impls/pull/76",
+        "state": "closed",
+        "merged_at": "2026-11-12T08:46:53Z",
+        "head": "4c9af1381bf4f5fb1f89e0b5411f004a0108df9a",
+        "merge_commit": "de2d6741b4b94cc5732a1638c8800087f475e509"
+      },
+      {
+        "repository": "hoprnet/hopr-strategy",
+        "number": 130,
+        "url": "https://github.com/hoprnet/hopr-strategy/pull/130",
+        "state": "closed",
+        "merged_at": "2026-11-11T13:13:14Z",
+        "head": "b5a5f06e893569974975853cd2bb63745adff32e",
+        "merge_commit": "c49fb35ca758d2ade7a89ec3c0c57092170d1c62"
+      },
+      {
+        "repository": "hoprnet/hoprd",
+        "number": 287,
+        "url": "https://github.com/hoprnet/hoprd/pull/287",
+        "state": "closed",
+        "merged_at": "2026-11-17T07:58:54Z",
+        "head": "b500cef0754d263d9fdada3159e251490c790044",
+        "merge_commit": "85c9af401699e0075c18c854d7eee88744622b49"
+      }
+    ],
+    "hoprd_dependency_check": {
+      "hopr_lib_commit": "2a67ecc94bab37d42e48d7246cfb05cc4b5c4fcd",
+      "verified_descendant_of": [
+        "3f8144d3bf70d1c4ccebcc4955e05a8576795f52",
+        "31d2dc4be783900a5f49d81d14ff0d808bdcbeaf"
+      ],
+      "method": "GitHub compare API; this pin is distinct from the hoprnet catalog source commit"
+    },
+    "validation": {
+      "metric_source_locations_verified": 153,
+      "event_span_source_locations_verified": 1538,
+      "all_metrics_in_markdown": true,
+      "generated_catalogs_reproduce_byte_for_byte": true,
+      "extractor_regression_tests_passed": 4,
+      "skill_frontmatter_valid": true,
+      "runtime_capture_or_build_validation": false
+    }
+  },
+  "historical_telemetry_review_2026_11_13": {
+    "checked_at": "2026-11-13",
+    "scope": "Complete lexical production metric/event/span scan of six pinned source snapshots, independent scans of both requested PR heads, manual exporter/state/observer/profile review. Feature-conditional source retained; tests, examples, benchmarks and auxiliary binaries excluded. No live node capture or HOPRd/PR build executed.",
+    "pull_requests": [
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8604,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8604",
+        "state": "open",
+        "merged_at": null,
+        "head": "b8cc3e18a7297de1f4aab70d9b8f3407558196a5",
+        "merge_commit": null
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8614,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8614",
+        "state": "open",
+        "merged_at": null,
+        "head": "316c1d32035494fc93c90c9a34686d0324d88f19",
+        "merge_commit": null
+      },
+      {
+        "repository": "hoprnet/hopr-impls",
+        "number": 62,
+        "url": "https://github.com/hoprnet/hopr-impls/pull/62",
+        "state": "closed",
+        "merged_at": "2026-11-11T11:35:14Z",
+        "head": "44adf18311dcdcb28de415976e10c3bf464e85e7",
+        "merge_commit": "6757ebf02df41d33984b768e3d544bcc9d4f7cbd"
+      },
+      {
+        "repository": "hoprnet/hopr-impls",
+        "number": 76,
+        "url": "https://github.com/hoprnet/hopr-impls/pull/76",
+        "state": "closed",
+        "merged_at": "2026-11-12T08:46:53Z",
+        "head": "4c9af1381bf4f5fb1f89e0b5411f004a0108df9a",
+        "merge_commit": "de2d6741b4b94cc5732a1638c8800087f475e509"
+      },
+      {
+        "repository": "hoprnet/hopr-strategy",
+        "number": 130,
+        "url": "https://github.com/hoprnet/hopr-strategy/pull/130",
+        "state": "closed",
+        "merged_at": "2026-11-11T13:13:14Z",
+        "head": "b5a5f06e893569974975853cd2bb63745adff32e",
+        "merge_commit": "c49fb35ca758d2ade7a89ec3c0c57092170d1c62"
+      }
+    ],
+    "release_api_check": {
+      "crate": "hopr-chain-connector",
+      "version": "0.33.0",
+      "source_commit": "31abd801c44ff983f9ad81c5421ef511e815514e",
+      "evidence": "Local Cargo registry package .cargo_vcs_info.json and src/lib.rs; PR8614 Cargo.lock and testing/state_dump.rs",
+      "finding": "PR8614 test adapter imports the removed public state_dump module; no working combined node_state integration is asserted."
+    },
+    "validation": {
+      "metric_source_locations_verified": 149,
+      "event_span_source_locations_verified": 1677,
+      "baseline_event_span_calls": 1466,
+      "pr_overlay_records": 211,
+      "all_metrics_in_markdown": true,
+      "generated_catalogs_reproduce_byte_for_byte": true,
+      "extractor_regression_tests_passed": 4,
+      "skill_frontmatter_valid": true,
+      "runtime_capture_or_build_validation": false
+    }
+  },
+  "historical_telemetry_review_2026_11_17": {
+    "checked_at": "2026-11-17",
+    "scope": "Six default branch source snapshots, merged PR heads and HOPRd host integration; static lexical catalog, selective manual review, no live-node capture or build validation. See inventory-coverage.json for exclusions.",
+    "pull_requests": [
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8604,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8604",
+        "state": "closed",
+        "merged_at": "2026-11-13T13:12:15Z",
+        "head": "b46e0fe061c68323d65a93e68fa31da6663010d4",
+        "merge_commit": "3f8144d3bf70d1c4ccebcc4955e05a8576795f52"
+      },
+      {
+        "repository": "hoprnet/hoprnet",
+        "number": 8614,
+        "url": "https://github.com/hoprnet/hoprnet/pull/8614",
+        "state": "closed",
+        "merged_at": "2026-11-14T10:38:55Z",
+        "head": "8e82f93712d3e06b5ba4a3f0cfa8bc65cf219d9e",
+        "merge_commit": "31d2dc4be783900a5f49d81d14ff0d808bdcbeaf"
+      },
+      {
+        "repository": "hoprnet/hopr-impls",
+        "number": 62,
+        "url": "https://github.com/hoprnet/hopr-impls/pull/62",
+        "state": "closed",
+        "merged_at": "2026-11-11T11:35:14Z",
+        "head": "44adf18311dcdcb28de415976e10c3bf464e85e7",
+        "merge_commit": "6757ebf02df41d33984b768e3d544bcc9d4f7cbd"
+      },
+      {
+        "repository": "hoprnet/hopr-impls",
+        "number": 76,
+        "url": "https://github.com/hoprnet/hopr-impls/pull/76",
+        "state": "closed",
+        "merged_at": "2026-11-12T08:46:53Z",
+        "head": "4c9af1381bf4f5fb1f89e0b5411f004a0108df9a",
+        "merge_commit": "de2d6741b4b94cc5732a1638c8800087f475e509"
+      },
+      {
+        "repository": "hoprnet/hopr-strategy",
+        "number": 130,
+        "url": "https://github.com/hoprnet/hopr-strategy/pull/130",
+        "state": "closed",
+        "merged_at": "2026-11-11T13:13:14Z",
+        "head": "b5a5f06e893569974975853cd2bb63745adff32e",
+        "merge_commit": "c49fb35ca758d2ade7a89ec3c0c57092170d1c62"
+      },
+      {
+        "repository": "hoprnet/hoprd",
+        "number": 287,
+        "url": "https://github.com/hoprnet/hoprd/pull/287",
+        "state": "closed",
+        "merged_at": "2026-11-17T07:58:54Z",
+        "head": "b500cef0754d263d9fdada3159e251490c790044",
+        "merge_commit": "85c9af401699e0075c18c854d7eee88744622b49"
+      }
+    ],
+    "hoprd_dependency_check": {
+      "hopr_lib_commit": "2a67ecc94bab37d42e48d7246cfb05cc4b5c4fcd",
+      "verified_descendant_of": [
+        "3f8144d3bf70d1c4ccebcc4955e05a8576795f52",
+        "31d2dc4be783900a5f49d81d14ff0d808bdcbeaf"
+      ],
+      "method": "GitHub compare API; this pin is distinct from the hoprnet catalog source commit"
+    },
+    "validation": {
+      "metric_source_locations_verified": 153,
+      "event_span_source_locations_verified": 1534,
+      "all_metrics_in_markdown": true,
+      "generated_catalogs_reproduce_byte_for_byte": true,
+      "extractor_regression_tests_passed": 4,
+      "skill_frontmatter_valid": true,
+      "runtime_capture_or_build_validation": false
+    }
   }
 }
