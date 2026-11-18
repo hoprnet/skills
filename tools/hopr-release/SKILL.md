@@ -79,7 +79,7 @@ access, `--token-cmd` and `--token-file` give the token, `--workspace DIR` sets 
 **A normal run**
 
 1. Run the dry run. Read `state`, `next` and `operations`. Show the plan to the user and
-   review it with them. Check that no `ci: Bump version` head is planned as a release and that
+   review it with them. Check that no `ci: Bump to version` head is planned as a release and that
    the git-pinned `hoprnet` repo comes before the start repo. Never run `--execute` before this
    review: a wrong plan has already caused a release that cannot be undone.
 2. Run `--execute` to release the ready crates. `--execute` publishes to crates.io and is a

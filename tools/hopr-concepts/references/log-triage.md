@@ -14,7 +14,7 @@ Assumed format: `tracing` text, one line per event, an ISO 8601 timestamp first
 | Lines in a time window | `awk -v a='FROM' -v b='TO' '$1 >= a && substr($1,1,length(b)) <= b' LOG` (FROM and TO are ISO prefixes, for example `2026-11-08T10:00`; TO is compared at its own precision, so `10:05` includes every second of that minute) |
 | Events per minute | `awk '{print substr($1,1,16)}' LOG \| sort \| uniq -c` |
 | Event counts inside a window | the window filter, then the count-by-event command |
-| Peer connection summary | `grep -o 'connected=\(true\|false\)' LOG \| sort \| uniq -c` |
+| Peer connection summary | `grep -oE 'connected=(true\|false)' LOG \| sort \| uniq -c` |
 
 Read order for a timeout or stall report: count by event, find the minute where the count
 jumps, filter to that window, then read a sample of the first lines of the window. Report the
