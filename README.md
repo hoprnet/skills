@@ -20,10 +20,11 @@ documented interfaces. The verification table states what was actually checked.
 
 ### Claude Code
 
-In Claude Code, add the marketplace and install the plugin:
+In Claude Code, add this repository ([hoprnet/skills](https://github.com/hoprnet/skills))
+as a marketplace and install its `hopr` plugin:
 
 ```text
-/plugin marketplace add hoprnet/skills
+/plugin marketplace add https://github.com/hoprnet/skills.git
 /plugin install hopr@hopr-marketplace
 ```
 
@@ -33,7 +34,7 @@ with `claude --plugin-dir plugins/hopr`.
 
 ### Codex
 
-Add the marketplace and plugin using the Codex CLI:
+Add this repository's marketplace and plugin using the Codex CLI:
 
 ```sh
 codex plugin marketplace add hoprnet/skills
@@ -42,7 +43,8 @@ codex plugin add hopr@hopr-marketplace
 
 An installed copy has been checked in Codex: `concepts` could read its bundled
 implementation reference, and `release` could read its script and run `--help`.
-The exact skill selection and invocation syntax has not been recorded.
+The CLI app server's `skills/list` reports their names as `hopr:concepts` and
+`hopr:release`. The exact prompt invocation syntax has not been recorded.
 
 The release script requires Python 3.11 or newer for `tomllib`. If the default
 `python3` is older, run the script with an explicitly selected interpreter, such
@@ -61,7 +63,7 @@ local checkout for the current project, run `pi install ./ -l` in its root.
 
 ### OpenCode
 
-Clone this repository and add its skills directory to your `opencode.json`,
+Clone [hoprnet/skills](https://github.com/hoprnet/skills) and add its skills directory to your `opencode.json`,
 substituting the absolute path to your checkout:
 
 ```json
@@ -85,6 +87,20 @@ that an authenticated model session executed the skill.
 | Codex | An installed copy provided both skills; `concepts` read its bundled reference, and `release` read its script and ran `--help` with Python 3.12. The CLI commands above were checked with 0.169.0-alpha.11.1; the version used for the installed-copy check was not recorded. | Exact invocation syntax and a client-initiated release plan. |
 | Pi 0.73.1 | Local package installation and discovery; the command list exposes `/skill:concepts` and `/skill:release`. A Pi session read both concepts references and ran the release script's `--help` with Python 3.12 (exit 0). Installation from a local Git server discovered both skills. | GitHub package installation, the exact commands used in the Pi session, and a client-initiated release plan. |
 | OpenCode 1.19.6 | `@concepts` loaded the skill and read both references; `@release` loaded the skill and ran the script's `--help` with Python 3.12 (exit 0). | A client-initiated release plan. |
+
+Command-only discovery was rechecked on 2026-11-18 without a model request:
+
+| Client and version | Discovery check and result |
+| --- | --- |
+| Claude Code 2.1.146 | Loaded this checkout with `--plugin-dir plugins/hopr`. The stream-JSON `initialize` control response listed `concepts` and `release`, each with a `(hopr)` description prefix. Both plugin and marketplace validation passed. This control API returns short names; it does not verify slash-command invocation. |
+| Codex 0.169.0-alpha.11.1 | With this checkout configured as a local marketplace, app-server `skills/list` with `forceReload: true` listed `hopr:concepts` and `hopr:release` from the previously installed `1.0.0` cache. Installation of the revised `0.2.0` package remains unchecked. |
+| Pi 0.73.1 | Started RPC mode with `--skill plugins/hopr/skills`; `get_commands` returned `skill:concepts` and `skill:release`, both pointing to this checkout. |
+| OpenCode 1.19.6 | With the skills directory configured as above, `opencode debug skill` returned `concepts` and `release`, both pointing to this checkout. |
+
+The release suite also passed all 245 tests on Python 3.11 and 3.12 with isolated
+Git configuration (`GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1`). An actual
+publish through the shortened release skill description remains untested; it
+requires a selected release target and approval of its release plan.
 
 Separately from the client sessions, the release script was run from a copied
 plugin against `hoprd@main` in a temporary workspace. Its anonymous dry run

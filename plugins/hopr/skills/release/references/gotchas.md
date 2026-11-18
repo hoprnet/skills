@@ -18,8 +18,7 @@ rest pattern, no `..Default::default()`) on purpose: when a repin pulls a hopr-l
 rev that added a field (e.g. new `SupervisorConfig` fields,
 `commitment_recommit_interval`), the downstream build fails to compile. That failure
 is the signal to wire the new field through deliberately, not a regression to be
-silenced. Suppressing it with a rest pattern hides real upstream changes. This mirrors
-the rust-engineer guidance; keep the two consistent.
+silenced. Suppressing it with a rest pattern hides real upstream changes.
 
 ## Publishing is a Nix workflow, not `cargo publish`
 
@@ -42,7 +41,7 @@ behind is the usual reason a downstream release PR won't go green.
 package build sets `CARGO_BUILD_RUSTFLAGS`, which replaces (does not merge) the
 config.toml rustflags — silently dropping `tokio_unstable` in the nix-built binary.
 If runtime behavior differs between a `cargo build` and the nix artifact, check this
-first. Covered in depth by the nix skill.
+first. Preserve `--cfg tokio_unstable` in the flags supplied by the Nix build.
 
 ## A published head can still be stale
 
