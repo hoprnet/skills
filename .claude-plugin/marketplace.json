@@ -5,8 +5,8 @@
     "url": "https://hoprnet.org"
   },
   "metadata": {
-    "description": "HOPR protocol and release skills for coding agents.",
-    "version": "1.0.0"
+    "description": "Skills for working on HOPR projects.",
+    "version": "0.2.0"
   },
   "plugins": [
     {
