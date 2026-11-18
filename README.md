@@ -40,8 +40,13 @@ codex plugin marketplace add hoprnet/skills
 codex plugin add hopr@hopr-marketplace
 ```
 
-The exact skill selection and invocation syntax has not been verified in an
-authenticated Codex session.
+An installed copy has been checked in Codex: `concepts` could read its bundled
+implementation reference, and `release` could read its script and run `--help`.
+The exact skill selection and invocation syntax has not been recorded.
+
+The release script requires Python 3.11 or newer for `tomllib`. If the default
+`python3` is older, run the script with an explicitly selected interpreter, such
+as `python3.12`. The Codex check ran only `--help`, not a release plan.
 
 ### Pi
 
@@ -77,7 +82,7 @@ that an authenticated model session executed the skill.
 | Client and version | Checked | Not yet checked |
 | --- | --- | --- |
 | Claude Code 2.1.327 | Plugin validation reports `hopr:concepts` and `hopr:release`. | Marketplace installation and invocation in an authenticated session. |
-| Codex 0.169.0-alpha.11.1 | CLI exposes the marketplace and plugin commands above. | Marketplace installation, discovery, skill names, and invocation. |
+| Codex | An installed copy provided both skills; `concepts` read its bundled reference, and `release` read its script and ran `--help` with Python 3.12. The CLI commands above were checked with 0.169.0-alpha.11.1; the version used for the installed-copy check was not recorded. | Exact invocation syntax and an installed-copy release plan. |
 | Pi 0.73.1 | Local package installation and discovery; the command list exposes `/skill:concepts` and `/skill:release`. | Git package installation and model execution. |
 | OpenCode 1.19.6 | Configured skill directory discovers both IDs. | Model invocation with `@concepts` or `@release`. |
 
