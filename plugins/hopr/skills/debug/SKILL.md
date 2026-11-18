@@ -1,5 +1,5 @@
 ---
-name: hopr-debug
+name: debug
 description: >
   Find and interpret HOPRd telemetry, or diagnose HOPR incidents from logs,
   metrics, traces, state snapshots, and support bundles. Use for channel funding,
@@ -38,7 +38,7 @@ that a deployed binary includes, enables, or exports the signal.
 The metric catalog and log catalog describe **source declarations**. They are
 not measurements. The source manifest records where those declarations came
 from; it is not a deployment manifest. For protocol terminology and semantics,
-consult [hopr-concepts](../hopr-concepts/SKILL.md).
+consult [concepts](../concepts/SKILL.md).
 
 For readers new to these terms: **HOPRd** is the node daemon; a **SURB** is a
 single-use reply block used to route a reply; **PIX** is a HOPR payment protocol;
