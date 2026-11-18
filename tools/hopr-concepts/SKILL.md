@@ -1,20 +1,7 @@
 ---
 name: hopr-concepts
 description: >
-  Ground-truth knowledge for any work on HOPR, the mixnet used as a
-  privacy-preserving transport. Loads the protocol facts (RFC-0001–0014) plus
-  Rust-implementation gotchas, so reasoning about the protocol or a live network
-  is correct rather than plausible-but-wrong. Invoke
-  it EVERY TIME you need a HOPR concept, not only when something is broken:
-  writing or modifying HOPR code; reasoning about or explaining how the
-  transport, mixing, incentives, relaying, or path-finding work; reviewing a
-  design, RFC, or PR; or debugging a running network (nodes not relaying,
-  tickets not winning or redeeming, channels stuck, packets dropped, sessions
-  failing, no route found, SURBs exhausted, Exit/PIX incentives misbehaving).
-  Trigger on any mention of HOPR as a transport or mixnet, hoprd, the channel
-  graph, relays, hops, tickets, Proof of Relay/PoR, SPHINX, SURBs, sessions,
-  path-finding, PIX, Cover Traffic, or the HOPR reward system. Not for generic
-  non-HOPR networking, other mixnets or VPNs, or HOPR token price/trading.
+  Load before editing or debugging HOPR code (hoprd, hopr-lib, edge-client, hopr-* crates) or explaining the protocol: tickets, channels, relays, SURBs, SPHINX, PoR, sessions, path-finding, PIX. Not for CI or git chores, other mixnets, price.
 ---
 
 # HOPR Concepts — protocol knowledge aid for network debugging
@@ -142,6 +129,9 @@ the protocol-level ground truth needed for most diagnoses.
   packet wire-format traps, the stalled-write-pump OOM path, and the SURB
   balancer / return-path gotchas with their metric signatures. Read this when a
   live node misbehaves in a way the protocol summary does not explain.
+- `references/log-triage.md` — count-first grep and awk recipes for a large node log
+  (events by count, time window, peer connection summary). Read this before grepping a
+  log of more than a few thousand lines.
 - `references/benchmarking.md` — HOPR-specific benchmarking gotchas layered on
   the general `performance` skill. Read this before profiling or benchmarking any
   HOPR component (win prob, bounded channels, the mixer adapter, n-hop naming).
