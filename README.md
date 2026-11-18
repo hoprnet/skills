@@ -20,8 +20,15 @@ documented interfaces. The verification table states what was actually checked.
 
 ### Claude Code
 
-In Claude Code, add this repository ([hoprnet/skills](https://github.com/hoprnet/skills))
-as a marketplace and install its `hopr` plugin:
+In Claude Code 2.1.275 or newer, install `hopr` directly from this repository:
+
+```text
+/plugin install hopr --marketplace hoprnet/skills
+```
+
+The [`--marketplace` option](https://code.claude.com/docs/en/plugins/install#add-a-marketplace-and-install-in-one-command)
+adds the repository's marketplace if needed and opens the plugin's installation
+options. On older Claude Code versions, use the two-step form:
 
 ```text
 /plugin marketplace add https://github.com/hoprnet/skills.git
