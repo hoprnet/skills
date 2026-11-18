@@ -70,9 +70,8 @@ substituting the absolute path to your checkout:
 }
 ```
 
-OpenCode discovers the IDs `concepts` and `release`. Its documented way to
-request a skill is to mention `@concepts` or `@release` in a prompt; actual
-model invocation has not been verified here.
+OpenCode discovers the IDs `concepts` and `release`. Mention `@concepts` or
+`@release` in a prompt to load the corresponding skill.
 
 ### Verification and collisions
 
@@ -81,10 +80,15 @@ that an authenticated model session executed the skill.
 
 | Client and version | Checked | Not yet checked |
 | --- | --- | --- |
+| Claude app (version not recorded) | Both skills worked. `concepts` read both bundled references; `release` located its script and references and ran the script's `--help` successfully. | Exact invocation syntax and a client-initiated release plan. |
 | Claude Code 2.1.327 | Plugin validation reports `hopr:concepts` and `hopr:release`. | Marketplace installation and invocation in an authenticated session. |
-| Codex | An installed copy provided both skills; `concepts` read its bundled reference, and `release` read its script and ran `--help` with Python 3.12. The CLI commands above were checked with 0.169.0-alpha.11.1; the version used for the installed-copy check was not recorded. | Exact invocation syntax and an installed-copy release plan. |
-| Pi 0.73.1 | Local package installation and discovery; the command list exposes `/skill:concepts` and `/skill:release`. | Git package installation and model execution. |
-| OpenCode 1.19.6 | Configured skill directory discovers both IDs. | Model invocation with `@concepts` or `@release`. |
+| Codex | An installed copy provided both skills; `concepts` read its bundled reference, and `release` read its script and ran `--help` with Python 3.12. The CLI commands above were checked with 0.169.0-alpha.11.1; the version used for the installed-copy check was not recorded. | Exact invocation syntax and a client-initiated release plan. |
+| Pi 0.73.1 | Local package installation and discovery; the command list exposes `/skill:concepts` and `/skill:release`. A Pi session read both concepts references and ran the release script's `--help` with Python 3.12 (exit 0). Installation from a local Git server discovered both skills. | GitHub package installation, the exact commands used in the Pi session, and a client-initiated release plan. |
+| OpenCode 1.19.6 | `@concepts` loaded the skill and read both references; `@release` loaded the skill and ran the script's `--help` with Python 3.12 (exit 0). | A client-initiated release plan. |
+
+Separately from the client sessions, the release script was run from a copied
+plugin against `hoprd@main` in a temporary workspace. Its anonymous dry run
+completed with a JSON plan; it did not execute releases or open pull requests.
 
 Because Pi and OpenCode do not namespace these skills, another skill named
 `concepts` or `release` can shadow one. In the tested versions, Pi selected the
