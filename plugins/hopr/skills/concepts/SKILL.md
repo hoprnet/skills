@@ -1,5 +1,5 @@
 ---
-name: hopr-concepts
+name: concepts
 description: >
   Ground-truth knowledge for any work on HOPR, the mixnet used as a
   privacy-preserving transport. Loads the protocol facts (RFC-0001–0014) plus

@@ -1,24 +1,11 @@
 ---
-name: hopr-release
+name: release
 description: >
-  Propagate a Rust fix through the HOPR multi-repo release cascade. Use whenever a
-  change in a hoprnet crate (hopr-lib, hopr-utilities, hopr-utils-session,
-  hopr-session-forwarder) has to reach downstream repos (hoprd, edge-client,
-  gnosis_vpn) that pin it by git ref, when flipping a downstream Cargo.toml pin from
-  a feature branch to a release branch to a published crates.io version, when the
-  same fix must land on several parallel lines (master/main, release/4.0,
-  release/4.1, release/v4, compat/v4), or when a downstream build breaks after
-  repinning to a newer hopr-lib rev. Also covers release-cascade.py: plan and run the
-  crates.io release of the crates edge-client or hoprd depend on (hopr-types, hopr-api,
-  hopr-utilities, hopr-impls, hopr-strategy, ...) and the repin PRs that follow. Trigger on
-  "propagate/backport the hoprnet change", "repin hoprd/edge-client/gnosis_vpn", "flip the
-  pin to the release branch", "cut a hopr release", "release the v4 or v5 line", "release
-  cascade", "release-cascade.py", "what needs to be released for edge-client/hoprd", "bump
-  hopr-lib", "impostor commit", a "[patch.crates-io]" git dependency on a hopr crate, a release
-  job whose version bump did not land, a "disabled due to previous publish" dry-run failure, or a
-  repin PR that fails to compile after a hopr-types or hopr-api major bump.
-  Not for the general git PR workflow (use git-workflow) or Rust code quality (use
-  rust-engineer).
+  Plan and propagate HOPR Rust releases and dependency repins across hoprnet,
+  hoprd, edge-client, gnosis_vpn, and parallel release or compatibility branches.
+  Use for release-cascade.py, backports, Git-to-crates.io pin changes, failed
+  release or repin builds, incompatible dependency majors, impostor commits, and
+  publish/version-bump failures. Not for general PR workflow or Rust code review.
 ---
 
 # HOPR release cascade
@@ -205,7 +192,8 @@ the repo's own CI recipe with the exact feature set it uses (`just` recipes in t
 
 ## Related skills
 
-- `hopr-concepts` — protocol ground truth (RFCs, incentives, SURBs). Reach for it
+- `concepts` (`hopr:concepts` in Claude Code) — protocol ground truth (RFCs,
+  incentives, SURBs). Reach for it
   when the question is what the change does to the network, not how to ship it.
 - `rust-engineer` for the exhaustive-literal tripwire and test conventions, `nix`
   for the `tokio_unstable`/`CARGO_BUILD_RUSTFLAGS` trap, and `git-workflow` for the
