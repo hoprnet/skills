@@ -9,10 +9,10 @@ Assumed format: `tracing` text, one line per event, an ISO 8601 timestamp first
 
 | Question | Command |
 | --- | --- |
-| Which events dominate? | `awk '{print $2, $3}' LOG \| sort \| uniq -c \| sort -rn \| head -20` |
+| Which events dominate? | `awk '{print $2, $3, $4, $5}' LOG \| sort \| uniq -c \| sort -rn \| head -20` (level, target and the first two words of the message, so two events with one level and target stay apart) |
 | Count one event | `grep -c 'PATTERN' LOG` |
-| Lines in a time window | `awk -v a='FROM' -v b='TO' '$1 >= a && $1 <= b' LOG` (FROM and TO are ISO prefixes, for example `2026-11-08T10:00`) |
-| Events per minute | `awk '{print substr($1,1,16)}' LOG \| uniq -c` |
+| Lines in a time window | `awk -v a='FROM' -v b='TO' '$1 >= a && substr($1,1,length(b)) <= b' LOG` (FROM and TO are ISO prefixes, for example `2026-11-08T10:00`; TO is compared at its own precision, so `10:05` includes every second of that minute) |
+| Events per minute | `awk '{print substr($1,1,16)}' LOG \| sort \| uniq -c` |
 | Event counts inside a window | the window filter, then the count-by-event command |
 | Peer connection summary | `grep -o 'connected=\(true\|false\)' LOG \| sort \| uniq -c` |
 
