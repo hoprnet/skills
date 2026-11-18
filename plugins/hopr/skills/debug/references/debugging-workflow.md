@@ -1,200 +1,153 @@
-# Operational debugging workflow
+# Debugging workflow
 
-Use this with the version/availability rules in [SKILL.md](../SKILL.md).
-Examples below operate on local capture copies. They do not connect to a node,
-change its configuration, or submit chain transactions.
+Use this procedure for one reported incident. Load the sibling `concepts` skill
+and its protocol summary before interpreting the evidence. Keep an investigation
+note beside the capture, not in the skill: symptom, versions, component timelines,
+hypotheses, checks, and outcome.
 
-## 1. Build the incident timeline
+## 1. Define the failure and map the participants
 
-Record application/worker and crate versions, process restarts, network, node
-PeerId/offchain key/chain address, Safe address, active configuration, available
-files, and timestamp offsets. Distinguish entry/client, relay, and exit roles.
+Write down the attempted operation, expected result, observed result, and time
+window. Start with the affected client or application when one is available.
+Record its version/revision, network, process lifetime and restarts, plus the
+provenance and coverage of each capture. Separate an application's visible status
+from the underlying component's observed behavior.
 
-For builds containing hoprnet#8544, look for `starting node` with `version`,
-`features`, `peer` and `chain_addr`; `network information` carries the network and
-ticket minimums. Full `node configuration` is DEBUG. Older builds can emit
-`Node information` and `hopr_lib_version` instead. The new INFO line does not
-contain the full settings or Safe/module binding described in the original PR
-body. A crate version in Cargo.toml is not proof of what is running; prefer the
-capture's build identity and deployment provenance. See
-[the reviewed log contracts](logging-changes.md).
+Map the roles involved in this operation using the concepts summary (§2.4, §3,
+§5, §6, §7). Roles describe behavior, not binary names; one application can fulfill
+more than one role.
 
-For JSON logs, select a session without losing ancestor fields:
+| Participant | Role in the investigation |
+|---|---|
+| Client / Entry | Originates the application request and HOPR session; inspect the embedding application and edge client as well as the protocol library. |
+| Relay | Forwards packets between hops; inspect transport, directed payment channels, tickets and acknowledgements for the relevant hop. |
+| Exit | Terminates the session toward the target service and sends replies using SURBs supplied by the Entry. Inspect its target connection separately. |
+| Chain/indexer service | Supplies chain state and transaction outcomes. Its availability and freshness are separate from packet transport. |
+| Target application/service | Produces or consumes the traffic outside the HOPR session. Its failure can look like a session stall. |
 
-```sh
-jq -c --arg sid 'SESSION_ID_FROM_CAPTURE' '
-  select(.fields.session_id? == $sid
-      or .span.session_id? == $sid
-      or any(.spans[]?; .session_id? == $sid))
-' node.jsonl
-```
+A session is the Entry–Exit exchange defined in summary §5; its establishment,
+data flow, and termination are separate stages. Forward and return paths may
+involve different relays. Use the concepts reference to establish the expected
+sequence for the failing stage before searching for its events.
 
-This assumes one valid JSON object per line. If the bundle includes mixed text,
-identify the JSON section first and record excluded/unparseable lines. This
-selection finds records containing the key; it cannot reconstruct missing spans.
+For an edge-client incident, start with the embedding application's build and
+[edge-client branch README](https://github.com/hoprnet/edge-client/blob/main/README.md).
+Switch to the tracked branch or release and resolve the actual library revisions
+from that build. Do the same for other producers; a current default branch is a
+navigation aid, not proof of the deployed behavior.
 
-## 2. Chain and connectivity before path speculation
+## 2. Analyze each component independently
 
-- Inspect component status and the last successful chain update. Subscription
-  retries, reconnects and explicit degraded status are evidence of feed problems.
-  A snapshot can look plausible while its underlying chain cache is stale.
-- With blokli-client#60 and hopr-impls#54, keepalives count as traffic, the default
-  stall threshold is 90 seconds, and the connector checks six subscription handles
-  every five seconds. `Stalled`, `Rejected` or `Ended` degrades a ready chain;
-  a brief retry/degraded client state does not. A permanently ended stream can
-  make the chain unavailable. Server close records are INFO only for connections
-  that carried GraphQL errors; other closes are DEBUG (blokli#554).
-- `/readyz` and `/healthyz` are limited predicates. In the pinned HOPRd source,
-  readiness allows a degraded chain that is not unavailable; health checks node
-  running/connectivity, not chain freshness. Do not use HTTP 200 to rule out a
-  subscription outage.
-- Compare announced peers, graph connectivity observations and actual transport
-  connections. These are different populations. Missing graph observations are
-  unknown, not disconnected. A remote channel elsewhere is not a local channel.
-- Confirm node announcement/address bindings when available. Do not infer ETH
-  addresses from a PeerId string without the binding.
+Group evidence by process and component (for example: host application, chain
+connector, strategy, graph/path selection, transport, session, and Exit target
+connection). Use captured targets, resource attributes, or source declarations
+to identify ownership. Do not merge components merely because they log at the
+same time.
 
-## 3. Channel funding: the original high-value signals
+For each component involved in the failed operation:
 
-Read edge `balance`, `is_connected` and probe measurements together (current dumps
-use `immediate_probe_rate`/`intermediate_probe_rate`; older records may expose
-`probe_success_rate`). Then inspect
-`channel-lifecycle: fund pass stopped` records and their attached budget fields.
-Use the captured winning-ticket face value/funding policy and channel direction;
-an incoming channel is funded by its counterparty. Do not hardcode a historical
-balance multiplier or infer the funding budget solely from the node's gas balance.
+1. Establish its process lifetime and capture coverage, including filters,
+   sampling, truncation, and clock uncertainty.
+2. Build a local timeline: last successful operation, state change, first failure,
+   retry/recovery, and final state. Preserve file/line or trace/query references.
+3. Compare inputs, decisions, and outputs with its responsibility. Record both
+   the evidence supporting a failure and evidence that contradicts it.
+4. Mark its outcome as observed success, observed failure, or unknown. A generic
+   ready/healthy state is insufficient evidence that this operation succeeded.
 
-Check Safe token balance, allowance/spendable budget, funds already reserved by
-pending transactions, channel state and chain freshness. A funded Safe with low
-allowance can still prevent funding. A warning about funding is not evidence that
-an already usable channel stopped working, and a quiet legacy strategy metric is
-not evidence that the current lifecycle strategy never ran.
+Choose the evidence path before querying:
 
-Current graph observations require retained TRACE, or an installed component reporter;
-rate-limited DEBUG failures and strategy warnings supply different evidence.
-Optional component state dumps supply capped samples, not every channel; use omitted/error
-counts before concluding that a particular channel is healthy or absent.
+- **Logs only / no OTLP:** follow the level-specific steps in
+  [logs and traces](logs-and-traces.md#investigate-at-the-captured-log-level).
+  Build local timelines with available identifiers; do not require a collector
+  or an invented distributed trace to proceed.
+- **OTLP available:** query each producer and process independently first, then
+  follow recorded trace/span relationships. Verify signal receipt and filters
+  using [the application documentation](logs-and-traces.md#otlp-configuration-by-application).
+- **Metrics available:** use the measurements and metadata actually exposed as
+  described below, alongside the component timeline.
+- **A component dump is present:** only then load
+  [state snapshots](state-snapshots.md) and the producer's schema.
 
-## 4. Path-health: separate search, validation, cache and selection
+### Use the metrics that reached this capture
 
-- Read forward selector phase-1 and phase-2 candidate counts and the direction,
-  source, destination and hop request. Phase 2 may not run; absence is not failure.
-- Separate graph-returned candidates from eligible/validated candidates. Nonzero
-  graph count followed by zero eligible routes points to pruning/validation, not
-  automatically to missing topology. Read the actual rejection evidence.
-- Cache hits need not trigger another graph search. Resolve request counts and
-  search counts have different denominators. A selected path is a weighted draw,
-  not proof that the path with the best apparent metric must always be selected.
-- A graph completion reason such as `no_eligible_paths` can describe an empty
-  result without identifying the individual rejected edge or its cause.
-- With compatible merged routing diagnostics, follow candidate-set identifiers and
-  selection records. Actual draws/weights may be TRACE-only; mark them unknown
-  if this build compiled TRACE out.
+Discover series in the supplied capture or the selected backend's metadata, with
+its time range and resource/label filters. A collector or cluster can drop, rename,
+aggregate, or relabel a producer's telemetry. If needed, compare an authorized
+producer scrape with backend results to locate that gap.
 
-## 5. Connectivity: actual probe outcomes
+Select measurements for the affected component using their names, HELP/description,
+type, unit, and labels. Check the producer's versioned docs or source when semantics
+are ambiguous. Record the query and filters so another investigator can repeat it.
+Do not query a fixed catalog or treat a missing series as zero.
 
-Count matched neighbor/loopback pongs and real expiries over the same window.
-Read the baseline `neighbor probe failed` and `loopback probe failed` messages
-with `reason=timeout` and their peer/path context. An unknown or late pong must
-not be counted as a second independent success after its timeout.
+- **Counters:** compare reset-aware deltas/rates within the same process lifetime
+  and label set; retain scrape gaps and reset uncertainty.
+- **Gauges:** compare levels and changes around the failure with their sample time.
+- **Histograms:** compare distributions for the same window and units, retaining
+  counts and bucket boundaries; do not average quantiles across instances.
 
-Many timeouts to already offline peers can dominate logs without explaining an
-active session's failure. Match the affected peer/path to the session before
-attributing causality. Probe success and successful application forwarding are
-different observations; a connected socket is not proof of packet delivery.
+Compare the measurements to the operation being investigated: activity before and
+after failure, arrivals versus departures, attempts versus outcomes. Check that
+those measurements count the same thing before subtracting or forming ratios.
 
-## 6. SURBs and the reply direction
+## 3. Correlate components at the failing boundary
 
-In builds containing [hoprnet#8694](https://github.com/hoprnet/hoprnet/pull/8694),
-the relayer-health decision distinguishes replies arriving directly from the
-counterparty from those arriving through another relayer. Delivery over one hop
-does not establish that the other hop works. A one-hop suspicion must persist
-to a later flush before a verdict is acted on; a later reply must be fresh and
-arrive over the affected hop to revive that verdict. If two relayers cannot be
-distinguished from the overdue replies, the decision can be deferred. Compare
-`relayer judged dead` (`relayer`, optionally `over`) with the DEBUG explanation
-records and actual path/capture coverage. This is a version-specific inference,
-not proof of the root cause of every timeout.
-[Decision source](https://github.com/hoprnet/hoprnet/blob/ff0076efaa58655e282ee7e2fa6b685ecd330a5d/transport/hopr/src/protocol/surb_telemetry.rs).
+Only after the local analyses, align the relevant timelines. Normalize timestamps
+to UTC but retain original times and clock uncertainty. Use explicit captured
+bindings to join process/node, request, session, peer, channel, and trace identities.
+A session ID is scoped to the producer and process lifetime; a channel also needs
+direction and, when present, epoch. Pseudonyms, peer IDs and chain addresses are
+not interchangeable. Coincident timestamps alone establish no causal link.
 
-Use `surb round-trip pair` details and the aggregate `surb round-trip flush tick`
-when present. Compare siblings serving the same destination in a common window.
-`expected`/minted means created SURBs, not necessarily SURBs spent by the exit.
-Returns can cross reporting windows. The ratio is not an absolute delivery
-probability and can be low on a healthy path or exceed one in a short window.
+Find the last demonstrated success and first demonstrated failure along the
+expected operation. Use only the relevant rows below; each comparison needs
+evidence from the owning components, or an explicit gap.
 
-Read produced/consumed SURBs, buffer estimate, target, refill activity and actual
-returned traffic together. An entry can overestimate the exit's stock when
-consumption/reports disappear. Total silence cannot by itself distinguish an
-idle exit from a broken return path. Favor corroboration from sibling paths,
-probe/connection changes and the exit's own records.
+| Failing operation | Compare across the boundary | Check that distinguishes explanations |
+|---|---|---|
+| Client startup/readiness | Host's startup failure with connector initialization, backend compatibility and chain synchronization | Compare the last completed stage with the next error and the deployed configuration/schema; successful synchronization does not prove later initialization succeeded. |
+| No usable route | Connector's fresh directed-channel view, transport reachability, strategy decisions and graph/path rejection | Inspect the rejected edge or constraint at the failure time. Distinguish unavailable funds/allowance, stale topology, disconnected peers and path constraints. Apply the final-hop exception from concepts. |
+| Session will not establish | Entry's request and challenge with Exit's admission/response and target connection | Determine whether the request arrived, was rejected, or its response failed to return. A local send proves neither remote receipt nor target availability. |
+| Established session stalls | Entry's sends/receives, Exit's target reads/writes, session progress and usable SURB supply | Separate no target response, no usable reply path, session loss/retries, and local backpressure. A reported buffer estimate is not proof that its contents are usable; check invalidation or expiry evidence when present. |
+| PIX prevents progress | Session's agreement/gate decision with strategy/pool submission and observed settlement | Correlate the same agreement and phase. Separate a retry or queued submission from successful settlement. |
+| Relay/ticket failure | Hop transport and acknowledgement evidence with directed channel state and ticket lifecycle | Check the relevant hop and epoch; distinguish forwarding, acknowledgement, winning and redemption using concepts. |
 
-If `sent` stops advancing while received/forwarded/ack traffic continues, inspect
-routing/SURB-resolution waits and queue pressure. It is a signature to investigate,
-not proof that the historic unbounded-retry defect is present in this version.
+For example, when a client connects but receives no data, first determine whether
+its host submitted data to the session. Next look for Exit receipt and target
+response. If the target produced a response but the client did not receive it,
+inspect the Exit's reply/SURB evidence and then the Entry's receive/reassembly
+evidence. If no Exit capture exists, report the boundary as unknown and request
+that bounded window; do not label the Exit healthy from the client's ready state.
 
-## 7. Sessions, frames and PIX
+## 4. Test an explanation
 
-- Use the same `session_id`, capability set, roles and process lifetime. Check
-  segmentation, retransmission/ACK/NACK settings before assuming flow control is
-  active. Frame MTU, frame timeout and transport packet size are different values.
-- Distinguish intentional datagram frame discards from protocol failure. Use
-  aggregate incomplete/discard/duplicate summaries and sampled frame counters.
-  Do not treat a frame-ID range as an exact delivered-frame denominator without
-  checking wrap, gaps, retransmissions and session boundaries.
-- In hoprnet#8509 builds, `session frames dropped in the last window` reports
-  `emitted`, `discarded`, `not_reassembled`, `duplicates` and `window_s`. It is
-  emitted on activity after at least 30 seconds, or at drop, only when there is
-  frame loss. Counts overlap and duplicate counts measure segments.
-- A burst of identical `unparseable packet` errors on an older build can be the
-  same malformed buffered message decoded repeatedly (hoprnet#8574). The fix
-  consumes malformed messages with a trusted boundary; invalid version/length
-  terminates the reader with `invalid session header; terminating session reader`.
-  Do not count repeated legacy errors as distinct bad network packets.
-- `hopr_session_*` instruments exist in source but HOPRd's REST `/metrics` removes
-  that prefix. Check the OTLP metrics path or the embedding session snapshot API;
-  do not conclude that there are no sessions from an absent REST series.
-- PIX questions: active cycles, gate state/block time, accepted versus invalid
-  shares, phase latency, stalled reason, deposits/recoveries and cycle closure.
-  Match the event/role/phase labels. A retransmitted SSA request is not a newly
-  opened cycle. Packet-layer ticket revenue does not pay the final destination.
-- Curvy PIX: `unreadable Curvy committed replay floor; replaying from genesis`
-  indicates a failed floor read and a conservative replay, not a proven missing
-  deposit. `keeping an unfinished Curvy replay because the sampled head does not
-  cover its window` is DEBUG and means the replay remains scheduled. A failed
-  catch-up warning includes `replayed` and `retry_in`; inspect later recovery and
-  indexer freshness. Newer embedders can supply a custom HTTP client for Curvy
-  relayer and indexer traffic; this client does not carry Blokli traffic. Check
-  the `custom_http_client` field on `Curvy PIX deposit pool ready` before assuming
-  which transport was used.
-  [Lifecycle](https://github.com/hoprnet/hopr-strategy/blob/de958cb79faf5c165cded725904ba7efc6edb371/src/pix/pools/curvy/lifecycle.rs),
-  [pool setup](https://github.com/hoprnet/hopr-strategy/blob/de958cb79faf5c165cded725904ba7efc6edb371/src/pix/pools/curvy/mod.rs).
+State a falsifiable hypothesis about the first failed boundary and the observation
+that would distinguish it from the strongest remaining alternative. Prefer an
+existing log window, trace, dump or read-only query. Check the relevant implementation
+at the deployed revision when the meaning of a field or transition is uncertain.
+Use concepts' implementation references as leads, then confirm against that revision.
 
-## 8. Throughput, runtime and OS pressure
+If the evidence is insufficient, specify a bounded reproduction: the same operation,
+participating processes, required identifiers, component/target log filter, collection
+window, expected success/failure evidence, and how to restore any changed setting.
+Use the application's documented controls and obtain authorization for changes
+outside the agreed scope. Escalate INFO to focused DEBUG, then TRACE only if the
+missing observation requires it and the build supports it. Change one relevant
+condition at a time and compare the outcome with the prediction.
 
-Compare packet sent/received/forwarded, rejects, ACKs, mixer queue/delay, egress
-ring-buffer drops, Rayon outstanding/queue-wait/execution/cancellation/orphans,
-and UDP packet lengths. Queue size, latency and discard rate answer different
-questions. Configured mixing is intentional latency, not automatically congestion.
+A source-only walkthrough or synthetic fixture can check reasoning and parsing;
+it cannot establish a live root cause. Stop at the evidence gap if no authorized
+check is available, and record the exact evidence needed to continue.
 
-Read `OS network tuning specs` if captured. Low UDP buffers or a congestion-control
-setting are hypotheses to test against packet/queue evidence, not a diagnosis
-from a startup warning alone. A CPU timeout does not guarantee work already
-running in Rayon stopped; check orphaned/cancelled task behavior for that build.
+## 5. Return a reproducible finding
 
-## 9. Cross the Gnosis VPN boundary explicitly
+Report the failed operation and window, producer versions and capture limitations,
+component findings, the correlation that supports the explanation, and the check
+that confirmed or rejected it. Cite artifact locations and the applicable concepts
+summary sections. Distinguish observations, inferences, and untested alternatives.
 
-HOPR/session evidence ends at a boundary. If a routed echo succeeds but the VPN
-still fails, inspect the worker/app/TUN, routing, DNS and killswitch timeline with
-the application-side debugger. Do not change firewall/kill-switch settings just
-to improve a log. A killswitch transition near a chain-feed disconnect is a timing
-correlation; it does not establish why every subsequent retry failed.
-
-## 10. Minimum useful handoff
-
-Provide: exact version/build and network; role/identities; UTC incident window;
-artifact paths and excerpt locations; expected versus observed behavior; evidence
-and counter denominators; leading hypothesis and alternatives; missing signals;
-smallest next check; ownership/confidence. Keep a full local capture when making
-an excerpt so the next reviewer can inspect context. Share it only through the
-user's authorized workflow.
+End with the smallest next action and expected result. If a fix or mitigation was
+applied within scope, repeat the original operation and check both recovery and
+new errors. Record what actually ran; repeated real-incident validation must not
+be claimed from documentation review alone.

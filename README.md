@@ -7,7 +7,7 @@ repositories. Each skill has one canonical copy in `plugins/hopr/skills/`.
 | --- | --- |
 | `concepts` | HOPR protocol concepts, RFCs, and implementation details for reasoning about the network. |
 | `release` | Plan and propagate Rust releases across HOPR repositories, including dependency repins. |
-| `debug` | Version-aware HOPR telemetry inventory and operational debugging for logs, metrics, traces, and support bundles. |
+| `debug` | Diagnose HOPR incidents from client, entry, relay, or exit logs, metrics, traces, and captured state. |
 
 The skills can also be selected automatically when relevant to a task. Review
 the release skill's instructions before performing operations that change
@@ -100,7 +100,8 @@ Check the client diagnostics and loaded skill paths if names collide.
 
 ## Bootstrap from another repository
 
-Each consuming repository's root `AGENTS.md` should include the
+The template is a bootstrap section for a consuming repository's root `AGENTS.md`,
+so an agent can find the shared skills without a plugin installation. Include the
 [shared HOPR skills bootstrap section](templates/hopr-skills-agents.md).
 It points to this repository and instructs a fresh agent to reuse a sibling
 `skills` checkout or clone it when missing, then read the skill for its current
