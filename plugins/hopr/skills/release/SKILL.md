@@ -1,7 +1,11 @@
 ---
-name: hopr-release
+name: release
 description: >
-  Propagate a hoprnet crate fix to hoprd, edge-client, gnosis_vpn: repin Cargo pins, flip to a release branch or crates.io, backport across release lines, run release-cascade.py. Use for a crates.io release tree. Not for plain PR flow or Rust style.
+  Plan and propagate HOPR Rust releases and dependency repins across hoprnet,
+  hoprd, edge-client, and parallel release or compatibility branches.
+  Use for release-cascade.py, backports, Git-to-crates.io pin changes, failed
+  release or repin builds, incompatible dependency majors, impostor commits, and
+  publish/version-bump failures. Not for general PR workflow or Rust code review.
 ---
 
 # HOPR release cascade
@@ -197,7 +201,8 @@ the repo's own CI recipe with the exact feature set it uses (`just` recipes in t
 
 ## Related skills
 
-- `hopr-concepts` — protocol ground truth (RFCs, incentives, SURBs). Reach for it
+- `concepts` (`hopr:concepts` in Claude Code) — protocol ground truth (RFCs,
+  incentives, SURBs). Reach for it
   when the question is what the change does to the network, not how to ship it.
 - `rust-engineer` for the exhaustive-literal tripwire and test conventions, `nix`
   for the `tokio_unstable`/`CARGO_BUILD_RUSTFLAGS` trap, and `git-workflow` for the

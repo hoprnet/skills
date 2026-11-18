@@ -5,27 +5,13 @@
     "url": "https://hoprnet.org"
   },
   "metadata": {
-    "description": "Claude Code plugin marketplace for HOPR agent skills.",
-    "version": "0.1.0"
+    "description": "Skills related to the HOPR mixnet.",
+    "version": "0.2.0"
   },
   "plugins": [
     {
-      "name": "hopr-concepts",
-      "description": "HOPR protocol knowledge aid — loads ground-truth concepts (RFC-0001–0014) for correct network debugging.",
-      "source": "./",
-      "skills": ["./tools/hopr-concepts"],
-      "metadata": {
-        "version": "1.2.1"
-      }
-    },
-    {
-      "name": "hopr-release",
-      "description": "Propagate a Rust fix through the HOPR multi-repo release cascade: repin hoprnet crates across hoprd/edge-client/gnosis_vpn, flip feature-branch pins to release branches to published versions, and fan out across parallel release lines.",
-      "source": "./",
-      "skills": ["./tools/hopr-release"],
-      "metadata": {
-        "version": "0.2.1"
-      }
+      "name": "hopr",
+      "source": "./plugins/hopr"
     }
   ]
 }

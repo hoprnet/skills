@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Run the release-cascade tests
-        run: python3 -I tools/hopr-release/scripts/test_release_cascade.py
+        run: python3 -I plugins/hopr/skills/release/scripts/test_release_cascade.py
   merge-gate:
     name: Merge gate
     if: always()

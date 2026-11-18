@@ -1,0 +1,11 @@
+{
+  "name": "hopr",
+  "description": "HOPR protocol concepts and multi-repository release workflows.",
+  "version": "1.0.0",
+  "author": {
+    "name": "HOPR",
+    "url": "https://hoprnet.org"
+  },
+  "repository": "https://github.com/hoprnet/skills",
+  "license": "MIT"
+}
