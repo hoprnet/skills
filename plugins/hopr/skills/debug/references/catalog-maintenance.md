@@ -14,7 +14,7 @@ exact name:
 ```sh
 jq '.metrics[] | select(.name == "hopr_packets_count") |
   {name, type, labels, meaning, source_url, availability}' \
-  tools/hopr-debug/references/metric-catalog.json
+  plugins/hopr/skills/debug/references/metric-catalog.json
 ```
 
 For example, this reports `hopr_packets_count` as a `MultiCounter` with a `type`
@@ -27,7 +27,7 @@ To search for all PIX metrics by name and display their descriptions:
 ```sh
 jq -r '.metrics[] | select(.name | startswith("hopr_pix_")) |
   [.name, .type, .meaning] | @tsv' \
-  tools/hopr-debug/references/metric-catalog.json
+  plugins/hopr/skills/debug/references/metric-catalog.json
 ```
 
 For logs and spans, use the JSONL queries in [logs and traces](logs-and-traces.md).
@@ -108,7 +108,7 @@ Supply all six baselines when regenerating this catalog. Add independent PR
 snapshots only for unmerged changes that need a separate overlay:
 
 ```sh
-python3.12 tools/hopr-debug/scripts/inventory_telemetry.py \
+python3.12 plugins/hopr/skills/debug/scripts/inventory_telemetry.py \
   /tmp/hopr-sources/sources.json /tmp/hopr-generated --verified-on YYYY-MM-DD
 ```
 
@@ -127,7 +127,7 @@ Run the extractor's parsing/coverage regression checks with:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3.12 -m unittest discover \
-  -s tools/hopr-debug/scripts -p 'test_*.py' -v
+  -s plugins/hopr/skills/debug/scripts -p 'test_*.py' -v
 ```
 
 A real capture is still needed to establish runtime availability, exporter shape,

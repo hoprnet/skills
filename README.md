@@ -36,8 +36,8 @@ options. On older Claude Code versions, use the two-step form:
 /plugin install hopr@hopr-marketplace
 ```
 
-The plugin validator reports the skill names `/hopr:concepts` and
-`/hopr:release`. For local development, start Claude Code from this checkout
+The plugin validator reports the skill names `/hopr:concepts`, `/hopr:release`,
+and `/hopr:debug`. For local development, start Claude Code from this checkout
 with `claude --plugin-dir plugins/hopr`.
 
 ### Codex
@@ -66,8 +66,9 @@ Install the Git package:
 pi install git:github.com/hoprnet/skills
 ```
 
-Pi exposes the skills as `/skill:concepts` and `/skill:release`. To install a
-local checkout for the current project, run `pi install ./ -l` in its root.
+Pi exposes the skills as `/skill:concepts`, `/skill:release`, and
+`/skill:debug`. To install a local checkout for the current project, run
+`pi install ./ -l` in its root.
 
 ### OpenCode
 
@@ -80,8 +81,8 @@ substituting the absolute path to your checkout:
 }
 ```
 
-OpenCode discovers the IDs `concepts` and `release`. Mention `@concepts` or
-`@release` in a prompt to load the corresponding skill.
+OpenCode discovers the IDs `concepts`, `release`, and `debug`. Mention the ID in
+a prompt, such as `@concepts` or `@release`, to load the corresponding skill.
 
 ### Verification and collisions
 
@@ -119,6 +120,19 @@ Because Pi and OpenCode do not namespace these skills, another skill named
 first skill found and emitted a collision warning; an OpenCode project-local
 skill took precedence over a skill from the explicitly configured directory.
 Check the client diagnostics and loaded skill paths if names collide.
+
+## Bootstrap from another repository
+
+Each consuming repository's root `AGENTS.md` should include the
+[shared HOPR skills bootstrap section](templates/hopr-skills-agents.md).
+It points to this repository and instructs a fresh agent to reuse a sibling
+`skills` checkout or clone it when missing, then read the skill for its current
+task. `HOPR_SKILLS_DIR` selects a different existing checkout. Existing checkouts
+and local edits are preserved.
+
+Direct file loading works without a plugin installation. Keep the bootstrap
+section consistent across `hoprnet`, `hopr-impls`, `hopr-strategy`, `hopr-types`,
+`hoprd`, and `hopr-utilities` when its behavior changes.
 
 ## Migration from the separate Claude plugins
 

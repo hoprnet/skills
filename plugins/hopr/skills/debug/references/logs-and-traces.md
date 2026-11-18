@@ -64,7 +64,7 @@ for merged PR changes and version boundaries see [pending-features.md](pending-f
 
 ## Query the inventory without loading it all
 
-Commands below run from `tools/hopr-debug`. They inspect documentation, not a node.
+Commands below run from `plugins/hopr/skills/debug`. They inspect documentation, not a node.
 
 ```sh
 # Find the source/level/fields for a message family in baseline source.
