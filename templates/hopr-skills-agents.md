@@ -1,3 +1,6 @@
+<!-- Copy this section into a consuming repository's root AGENTS.md to make
+     shared HOPR skills discoverable without a client plugin installation. -->
+
 ## Shared HOPR skills
 
 Before HOPR-specific work, provision the shared skills from
@@ -20,11 +23,11 @@ current task, even if the agent's skill list has not discovered it:
 | Task | File relative to the skills checkout |
 |---|---|
 | Protocol behavior, architecture, routing, tickets, sessions or PIX semantics | `plugins/hopr/skills/concepts/SKILL.md` |
-| Debugging HOPRd, logs, metrics, traces, state dumps or support captures | `plugins/hopr/skills/debug/SKILL.md` |
+| Diagnosing HOPR client, entry, relay or exit incidents from captured evidence | `plugins/hopr/skills/debug/SKILL.md` |
 | Crate releases, dependency repins, backports or cross-repository release cascades | `plugins/hopr/skills/release/SKILL.md` |
 
 Read the selected skill's referenced resources as needed. Direct file loading
 works for this task without a preinstalled plugin; client-native installation is
-documented in the skills repository's [README](https://github.com/hoprnet/skills#install).
+documented in the skills repository's [README](https://github.com/hoprnet/skills#install-and-use).
 If cloning or reading is blocked, report the missing skill and continue only work
 that does not depend on it.
