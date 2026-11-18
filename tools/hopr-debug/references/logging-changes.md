@@ -1,6 +1,6 @@
 # Logging changes tracked by hoprnet#8456
 
-Reviewed 2026-11-09 from the epic timeline, all 13 current sub-issue timelines,
+Historical epic-wide review: 2026-11-09 from the epic timeline, all 13 then-current sub-issue timelines,
 and linked PR descriptions and changed-file patches: 19 implementation/consumer
 PRs plus the existing [skills#9](https://github.com/hoprnet/skills/pull/9) proposal.
 Exact heads and merge commits are in [source-manifest.json](source-manifest.json)
@@ -75,7 +75,11 @@ Correlate `run_id`, `component=hoprd` or `component=edgli`, time and node identi
 Packets carry no trace context, so client/node spans are not automatically one
 distributed trace. Node termination or a killed client can lose queued spans.
 
-## Open proposals and closed-unmerged work
+## PR status at the historical 2026-11-09 review
+
+Current 2026-11-18 status and schemas are in [pending-features.md](pending-features.md).
+In particular, hopr-impls#62, hopr-impls#76 and hopr-strategy#130 have since merged.
+The table below preserves the earlier review, not current availability.
 
 | PR | Review status and interpretation |
 |---|---|
@@ -87,6 +91,6 @@ distributed trace. Node termination or a killed client can lose queued spans.
 | [hoprnet#8575](https://github.com/hoprnet/hoprnet/pull/8575) | Closed **without merge**: proposed hopr-utilities 0.17.4 repin. Check the actual dependency graph; closure does not establish inclusion. |
 | [hopr-integration-tests#29](https://github.com/hoprnet/hopr-integration-tests/pull/29) | Closed **without merge**: return-path scenarios referenced by the frame-noise issue. Not proof these tests/stack fixes shipped. |
 
-See [pending-features.md](pending-features.md) for proposal contracts. The metric
-catalog retains its pinned 2026-11-04 sources; this review does not refresh or
-validate every metric declaration.
+The metric/event catalogs were independently refreshed on 2026-11-18; see
+[telemetry-inventory.md](telemetry-inventory.md) and [catalog-maintenance.md](catalog-maintenance.md).
+Historical PR descriptions above do not override the newer pinned source contracts.
