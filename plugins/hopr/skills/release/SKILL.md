@@ -2,7 +2,7 @@
 name: release
 description: >
   Plan and propagate HOPR Rust releases and dependency repins across hoprnet,
-  hoprd, edge-client, gnosis_vpn, and parallel release or compatibility branches.
+  hoprd, edge-client, and parallel release or compatibility branches.
   Use for release-cascade.py, backports, Git-to-crates.io pin changes, failed
   release or repin builds, incompatible dependency majors, impostor commits, and
   publish/version-bump failures. Not for general PR workflow or Rust code review.
