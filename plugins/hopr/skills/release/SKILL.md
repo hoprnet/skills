@@ -2,7 +2,7 @@
 name: release
 description: >
   Plan and propagate HOPR Rust releases and dependency repins across hoprnet,
-  hoprd, edge-client, gnosis_vpn, and parallel release or compatibility branches.
+  hoprd, edge-client, and parallel release or compatibility branches.
   Use for release-cascade.py, backports, Git-to-crates.io pin changes, failed
   release or repin builds, incompatible dependency majors, impostor commits, and
   publish/version-bump failures. Not for general PR workflow or Rust code review.
@@ -82,9 +82,18 @@ access, `--token-cmd` and `--token-file` give the token, `--workspace DIR` sets 
 
 **A normal run**
 
-1. Run the dry run. Read `state`, `next` and `operations`.
-2. Run `--execute` to release the ready crates. Each repo is done when its versions show on
-   crates.io.
+1. Run the dry run. Read `state`, `next` and `operations`. Show the plan to the user and
+   review it with them. Check that no `ci: Bump to version` head is planned as a release and that
+   the git-pinned `hoprnet` repo comes before the start repo. Never run `--execute` before this
+   review: a wrong plan has already caused a release that cannot be undone.
+2. Run `--execute` to release the ready crates. `--execute` publishes to crates.io and is a
+   gated action: the auto classifier denies it unless the user has allowed it. Ask the user for
+   approval first and quote the allow rule `Bash(python3 */release-cascade.py *--execute)`, the
+   form of the command the script prints for a resume (`python3 <path> --from ... --execute`).
+   Run the first `--execute` without `--yes`. The run builds its own plan from the live branch
+   and crates.io state, so compare the crate names and versions in its confirmation prompt with
+   the plan you reviewed. If they differ, answer no and run the dry run again.
+   Each repo is done when its versions show on crates.io.
 3. Open the PRs for the repo behind the git pin (`hoprnet`) first. A person merges them.
 4. Run again. The start repo's PR opens only after the `hoprnet` PR is merged.
 5. Repeat the dry run until `state` is `complete`.

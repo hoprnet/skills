@@ -5,7 +5,7 @@
     "url": "https://hoprnet.org"
   },
   "metadata": {
-    "description": "Skills for working on HOPR projects.",
+    "description": "Skills related to the HOPR mixnet.",
     "version": "0.3.0"
   },
   "plugins": [
