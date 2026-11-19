@@ -1,6 +1,6 @@
 """Tests for release-cascade.py: version admission and the operation list.
 
-  python3 -m unittest tools/hopr-release/scripts/test_release_cascade.py
+  python3 -I plugins/hopr/skills/release/scripts/test_release_cascade.py
 """
 import importlib.util
 import re

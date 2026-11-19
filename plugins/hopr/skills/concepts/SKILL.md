@@ -1,5 +1,5 @@
 ---
-name: hopr-concepts
+name: concepts
 description: >
   Load before editing, debugging or benchmarking HOPR code (hoprd, hopr-lib, edge-client, hopr-* crates) or explaining the protocol: tickets, channels, relays, SURBs, SPHINX, PoR, sessions, path-finding, PIX. Not for CI, git, other mixnets, price.
 ---

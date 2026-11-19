@@ -1,0 +1,12 @@
+{
+  "name": "hopr",
+  "description": "Skills related to the HOPR mixnet.",
+  "version": "0.2.0",
+  "author": {
+    "name": "HOPR",
+    "url": "https://hoprnet.org"
+  },
+  "repository": "https://github.com/hoprnet/skills",
+  "license": "MIT",
+  "skills": "./skills/"
+}

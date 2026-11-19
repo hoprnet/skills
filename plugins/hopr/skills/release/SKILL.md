@@ -1,7 +1,11 @@
 ---
-name: hopr-release
+name: release
 description: >
-  Propagate a hoprnet crate fix to hoprd, edge-client, gnosis_vpn: repin Cargo pins, flip to a release branch or crates.io, backport across release lines, run release-cascade.py. Use for a crates.io release tree. Not for plain PR flow or Rust style.
+  Plan and propagate HOPR Rust releases and dependency repins across hoprnet,
+  hoprd, edge-client, and parallel release or compatibility branches.
+  Use for release-cascade.py, backports, Git-to-crates.io pin changes, failed
+  release or repin builds, incompatible dependency majors, impostor commits, and
+  publish/version-bump failures. Not for general PR workflow or Rust code review.
 ---
 
 # HOPR release cascade
@@ -157,7 +161,7 @@ load-bearing ones:
 - **A downstream build that breaks right after repinning to a newer hopr-lib rev is
   usually correct.** Downstream deliberately uses exhaustive struct/enum literals (no
   `..`) as tripwires, so a new upstream field becomes a compile error. Wire the new
-  field through; do not paper over it with `..Default::default()`. (See rust-engineer.)
+  field through; do not paper over it with `..Default::default()`.
 - **Publishing goes through the Nix `build-library` workflow in the dev shell, not
   plain `cargo publish`.** For the library crates that is the `Publish library` step of
   each repo's release workflow, which `scripts/release-cascade.py` triggers (see
@@ -183,9 +187,8 @@ load-bearing ones:
 
 Repinning and release work is the canonical "babysit until green, merge nothing until
 told" loop: keep failing checks and review threads resolved across every PR in the
-cascade, but gate every merge, publish, and tag on explicit approval. Branching,
-committing, and PRs follow git-workflow; the never-merge/never-tag-without-
-in-the-moment-approval rule holds here especially, because a premature merge on one
+cascade, but gate every merge, publish, and tag on explicit approval. Follow the
+target repository's branch, commit, and PR conventions. A premature merge on one
 line forces the whole cascade to be redone.
 
 The script opens every PR as the person who runs it, and GitHub does not let an author approve
@@ -197,8 +200,6 @@ the repo's own CI recipe with the exact feature set it uses (`just` recipes in t
 
 ## Related skills
 
-- `hopr-concepts` — protocol ground truth (RFCs, incentives, SURBs). Reach for it
+- `concepts` (`hopr:concepts` in Claude Code) — protocol ground truth (RFCs,
+  incentives, SURBs). Reach for it
   when the question is what the change does to the network, not how to ship it.
-- `rust-engineer` for the exhaustive-literal tripwire and test conventions, `nix`
-  for the `tokio_unstable`/`CARGO_BUILD_RUSTFLAGS` trap, and `git-workflow` for the
-  branch, PR, and merge-gate mechanics this cascade runs on.

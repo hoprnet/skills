@@ -1,0 +1,8 @@
+{
+  "name": "hopr-skills",
+  "version": "0.2.0",
+  "private": true,
+  "pi": {
+    "skills": ["./plugins/hopr/skills"]
+  }
+}
