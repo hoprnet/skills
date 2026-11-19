@@ -1,24 +1,7 @@
 ---
 name: hopr-release
 description: >
-  Propagate a Rust fix through the HOPR multi-repo release cascade. Use whenever a
-  change in a hoprnet crate (hopr-lib, hopr-utilities, hopr-utils-session,
-  hopr-session-forwarder) has to reach downstream repos (hoprd, edge-client,
-  gnosis_vpn) that pin it by git ref, when flipping a downstream Cargo.toml pin from
-  a feature branch to a release branch to a published crates.io version, when the
-  same fix must land on several parallel lines (master/main, release/4.0,
-  release/4.1, release/v4, compat/v4), or when a downstream build breaks after
-  repinning to a newer hopr-lib rev. Also covers release-cascade.py: plan and run the
-  crates.io release of the crates edge-client or hoprd depend on (hopr-types, hopr-api,
-  hopr-utilities, hopr-impls, hopr-strategy, ...) and the repin PRs that follow. Trigger on
-  "propagate/backport the hoprnet change", "repin hoprd/edge-client/gnosis_vpn", "flip the
-  pin to the release branch", "cut a hopr release", "release the v4 or v5 line", "release
-  cascade", "release-cascade.py", "what needs to be released for edge-client/hoprd", "bump
-  hopr-lib", "impostor commit", a "[patch.crates-io]" git dependency on a hopr crate, a release
-  job whose version bump did not land, a "disabled due to previous publish" dry-run failure, or a
-  repin PR that fails to compile after a hopr-types or hopr-api major bump.
-  Not for the general git PR workflow (use git-workflow) or Rust code quality (use
-  rust-engineer).
+  Propagate a hoprnet crate fix to hoprd, edge-client, gnosis_vpn: repin Cargo pins, flip to a release branch or crates.io, backport across release lines, run release-cascade.py. Use for a crates.io release tree. Not for plain PR flow or Rust style.
 ---
 
 # HOPR release cascade
@@ -95,9 +78,18 @@ access, `--token-cmd` and `--token-file` give the token, `--workspace DIR` sets 
 
 **A normal run**
 
-1. Run the dry run. Read `state`, `next` and `operations`.
-2. Run `--execute` to release the ready crates. Each repo is done when its versions show on
-   crates.io.
+1. Run the dry run. Read `state`, `next` and `operations`. Show the plan to the user and
+   review it with them. Check that no `ci: Bump to version` head is planned as a release and that
+   the git-pinned `hoprnet` repo comes before the start repo. Never run `--execute` before this
+   review: a wrong plan has already caused a release that cannot be undone.
+2. Run `--execute` to release the ready crates. `--execute` publishes to crates.io and is a
+   gated action: the auto classifier denies it unless the user has allowed it. Ask the user for
+   approval first and quote the allow rule `Bash(python3 */release-cascade.py *--execute)`, the
+   form of the command the script prints for a resume (`python3 <path> --from ... --execute`).
+   Run the first `--execute` without `--yes`. The run builds its own plan from the live branch
+   and crates.io state, so compare the crate names and versions in its confirmation prompt with
+   the plan you reviewed. If they differ, answer no and run the dry run again.
+   Each repo is done when its versions show on crates.io.
 3. Open the PRs for the repo behind the git pin (`hoprnet`) first. A person merges them.
 4. Run again. The start repo's PR opens only after the `hoprnet` PR is merged.
 5. Repeat the dry run until `state` is `complete`.
