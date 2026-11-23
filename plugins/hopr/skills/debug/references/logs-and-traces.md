@@ -36,15 +36,22 @@ application logs the same events at a given level.
 | DEBUG | Follow the operation's recorded inputs, decisions, retries and outcomes. Bind request/session IDs to their parent spans and compare decisions with the deployed configuration. | If aggregate decisions cannot distinguish the hypotheses, identify the missing packet/frame or internal transition before requesting TRACE. |
 | TRACE | Inspect the smallest relevant window for the recorded sequence of transitions, packets or frames; match attempts and results, keeping duplicates and retries distinct. | Check build-time level gates, target filters, sampling, rotation and collector drops. A runtime TRACE setting cannot restore compiled-out events. |
 
-Use separate timelines for the host application and its library components even
-when they share one log file. For an edge client, inspect the host's initialization
-and request handling alongside the connector, strategy, transport and session
-records. Read the [edge-client README](https://github.com/hoprnet/edge-client/blob/main/README.md)
-on the matching branch for the embedding boundary.
+Use separate timelines for host/HOPR boundary events and HOPR library components
+even when they share one log file. For an embedded entry, select the host's HOPR
+initialization, submitted operations and returned results alongside the enabled
+connector, strategy, transport and session records. Record their library revisions
+and feature flags when the host version alone is insufficient. Read the
+[edge-client README](https://github.com/hoprnet/edge-client/blob/main/README.md)
+on the matching branch for that integration; daemon controls need not apply.
+Preserve the request/challenge, Exit identity, requested/selected target and
+session binding when captured, so admission, connection and response failures
+can be separated. Route failures inside the host or target to its owner with this
+boundary evidence, rather than expanding into product-specific log investigation.
 
 ## Without OTLP
 
-Use the local component timelines and identifiers to follow the failed operation.
+Use local logs, available metrics, and captured state to build component timelines
+and follow the failed operation with recorded identifiers.
 Keep log spans as local context; a span name or thread ID does not prove a
 cross-process relationship. Compare counterpart captures only where IDs or recorded
 bindings establish a join. If only the client capture exists, distinguish what it
@@ -53,22 +60,45 @@ would close the gap; enabling OTLP is not a prerequisite for analysis.
 
 ## OTLP configuration by application
 
-Export uses OTLP. Configuration belongs to the application or embedding host.
-These maintained branch links are starting points, not a fixed configuration
-contract or an exhaustive list of producers:
+When OTLP export is available, configuration belongs to the application or
+embedding host. Use hoprd, blokli, edge-client, and hopr-integration-tests as
+versioned examples of telemetry producers. These branch links locate their
+Markdown documentation; they are not a shared configuration contract or an
+exhaustive list of producers:
 
-| Application / context | Branch documentation |
-|---|---|
-| Edge client / embedding application | [edge-client `main`: README feature flags](https://github.com/hoprnet/edge-client/blob/main/README.md#feature-flags); also read the host application's exporter setup |
-| HOPRd deployment | [hoprd `main`: Compose profiles](https://github.com/hoprnet/hoprd/blob/main/deploy/compose/README.md#profiles) |
-| Blokli daemon | [blokli `main`: OTLP configuration](https://github.com/hoprnet/blokli/blob/main/OTLP.md) |
-| Integration-test nodes and edgli client | [hopr-integration-tests `main`: Exporting spans to a collector](https://github.com/hoprnet/hopr-integration-tests/blob/main/README.md#exporting-spans-to-a-collector) |
+| Producer example | Branch documentation | What to resolve at the incident revision |
+|---|---|---|
+| HOPRd | [hoprd `main`: Compose README profiles](https://github.com/hoprnet/hoprd/blob/main/deploy/compose/README.md#profiles) | Endpoint-driven enablement, explicit suppression, signal selection and metric export cadence; Compose is one configuration example. |
+| Blokli daemon | [blokli `main`: OTLP.md](https://github.com/hoprnet/blokli/blob/main/OTLP.md) | Signal defaults, environment overrides, HTTP/gRPC selection, per-signal paths and independent Prometheus metrics. |
+| Edge client / embedding application | [edge-client `main`: README feature flags](https://github.com/hoprnet/edge-client/blob/main/README.md#feature-flags); also read the host application's exporter setup | Verify telemetry build support, then resolve enabled signals, transport, endpoint and resource attributes from the running host's exporter initialization and effective settings. |
+| Integration-test nodes and edgli client | [hopr-integration-tests `main`: README span export](https://github.com/hoprnet/hopr-integration-tests/blob/main/README.md#exporting-spans-to-a-collector) | Harness revision and actual node/client builds, run settings, per-producer signals and transport, identity labels, separate traces and shutdown losses. |
 
 Switch each link to the deployed branch or release tag when it differs from
-`main`, and record the resolved revision. Check documented build features,
-enablement, selected signals, endpoint/transport, resource identity, sampling,
-export cadence and shutdown behavior. If documentation omits a detail, inspect
-the exporter implementation on that revision.
+`main`, then record the resolved commit and a permalink to the Markdown used.
+If documentation omits or contradicts a detail, inspect the effective configuration
+and exporter implementation at that revision. Do not assume that all components
+export the same signals, use the same transport, or honor the same settings.
+
+### Incident telemetry record
+
+For every incident, record the following for each relevant producer/process.
+Mark fields as disabled, unavailable, not applicable, or unknown with the evidence
+for that status; an unavailable collector does not block local investigation.
+
+| Field | Evidence to record |
+|---|---|
+| Actual producer | Binary or embedding host, emitting component, node/instance and process lifetime; distinguish harness settings from the processes that emit telemetry. |
+| Deployed revision | Running binary/image revision and relevant library/build features; record the harness and deployment revisions separately when applicable. |
+| Enabled signals | Traces, logs and metrics individually: supported by the build, enabled in effective runtime configuration, and observed in the capture. Local logging or a metrics endpoint does not establish OTLP export. |
+| Transport | Actual OTLP/HTTP or OTLP/gRPC selection for each exporter; verify compatibility through each collector/receiver hop. |
+| Endpoint | Effective destination, scheme, port and per-signal path where applicable, including configuration overrides; redact credentials. |
+| Resource attributes | Actual exported keys and values identifying service, instance, node and run; distinguish resource attributes from span/event fields and collector-added labels. |
+| Collector coverage | Collector/backend and configuration revision, covered producers, signals and time windows, observed receipt, pipeline routing, filters, sampling, drops and retention. Record unavailable or unverified coverage explicitly. |
+
+Also check export cadence and shutdown/flush behavior when they could explain
+gaps in the incident window.
+
+### Query and correlate received telemetry
 
 1. Verify receipt for each relevant producer, process and time window in the
    collector/backend. Compare with local evidence to detect export gaps.
@@ -80,7 +110,10 @@ the exporter implementation on that revision.
    boundary; account for clock uncertainty in cross-process timing.
 4. Correlate to logs/metrics through recorded bindings. Where propagation stops,
    return to independently established component timelines and mark the missing
-   connection. Do not synthesize a distributed trace from matching timestamps.
+   connection. Spans from different nodes do not automatically form one
+   distributed trace: require evidence of trace-context propagation and recorded
+   parent/link relationships. A shared run ID or matching timestamps can select
+   a comparison window but cannot establish a causal join.
 
 Local logs, local spans and enabled metrics alone do not prove OTLP delivery.
 A complete-looking trace also does not establish that all participants or signals

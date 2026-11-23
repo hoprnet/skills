@@ -9,8 +9,10 @@ a schedule, or a fixed schema.
 1. Identify the producing application, component, process lifetime, capture time
    and revision. Preserve the envelope and raw payload before decoding it.
 2. Read that application's dump documentation on its tracked branch or release.
-   Follow its dependency versions to the schema and implementation. Branch links
-   below help locate the owner; use the deployed revision to interpret the capture.
+   Follow its HOPR dependency revisions and feature flags to the producing
+   implementation and schema. Establish which component emitted the dump rather
+   than inferring capabilities from a host version or node-builder name. Branch
+   links below help locate the owner; use the deployed revision for interpretation.
 3. Resolve only the symbols and fields actually present. Search for the captured
    event discriminator, payload type or field in the matching source, then inspect
    serialization, collection limits, error handling and update behavior.

@@ -9,9 +9,18 @@ hypotheses, checks, and outcome.
 
 Write down the attempted operation, expected result, observed result, and time
 window. Start with the affected client or application when one is available.
-Record its version/revision, network, process lifetime and restarts, plus the
-provenance and coverage of each capture. Separate an application's visible status
-from the underlying component's observed behavior.
+Record the actual process, network, lifetime and restarts, plus the provenance
+and coverage of each capture. Identify whether HOPR runs as a library in an
+embedding host or as an operator-run daemon. Record the host/binary version and,
+where it does not identify the running code, the HOPR library revisions, build
+feature flags, and enabled components/configuration. Verify which APIs, session
+server capabilities, and relay-side ticket state exist before querying them;
+a constructor such as `build_edge` alone does not establish those capabilities.
+Separate an application's visible status from the component's observed behavior.
+
+Record each producer's [telemetry setup and collection coverage](logs-and-traces.md#incident-telemetry-record),
+including disabled or unavailable OTLP and unresolved fields. This establishes
+which missing signals are evidence gaps before interpreting the incident.
 
 Map the roles involved in this operation using the concepts summary (§2.4, §3,
 §5, §6, §7). Roles describe behavior, not binary names; one application can fulfill
@@ -19,26 +28,33 @@ more than one role.
 
 | Participant | Role in the investigation |
 |---|---|
-| Client / Entry | Originates the application request and HOPR session; inspect the embedding application and edge client as well as the protocol library. |
-| Relay | Forwards packets between hops; inspect transport, directed payment channels, tickets and acknowledgements for the relevant hop. |
-| Exit | Terminates the session toward the target service and sends replies using SURBs supplied by the Entry. Inspect its target connection separately. |
-| Chain/indexer service | Supplies chain state and transaction outcomes. Its availability and freshness are separate from packet transport. |
-| Target application/service | Produces or consumes the traffic outside the HOPR session. Its failure can look like a session stall. |
+| Host / Entry boundary | Establish whether the host submitted the operation to the HOPR entry library or daemon, and what HOPR returned. Diagnose entry-side HOPR behavior; hand off failures within the host. |
+| Relay | Forwards packets between hops; inspect the relevant transport, directed channels, tickets and acknowledgements when implemented and enabled. |
+| HOPR destination / Exit | Identify the HOPR endpoint receiving the session request, its admission/forwarding implementation, and evidence of replies using Entry-supplied SURBs. |
+| Chain service (for example Blokli) | Treat connection state, freshness of indexed state, and transaction submission/outcomes as separate dependency checks. A healthy chain service does not establish packet-forwarding health. |
+| Session target / external service | Identify the service the Exit is asked to reach. Use connection, request and response evidence at the Exit boundary; hand off diagnosis inside that service. |
+
+Record the HOPR destination/Exit identity separately from the requested session
+target (concepts summary §5.2). When the implementation resolves or restricts that
+target, capture the selected endpoint and applicable policy as well. Reaching the
+Exit does not establish that it accepted or connected to the target. Keep the
+captured identities and their explicit bindings for correlation in step 3.
 
 A session is the Entry–Exit exchange defined in summary §5; its establishment,
 data flow, and termination are separate stages. Forward and return paths may
 involve different relays. Use the concepts reference to establish the expected
 sequence for the failing stage before searching for its events.
 
-For an edge-client incident, start with the embedding application's build and
+For an edge-client incident, locate its HOPR integration through the host's build and
 [edge-client branch README](https://github.com/hoprnet/edge-client/blob/main/README.md).
-Switch to the tracked branch or release and resolve the actual library revisions
-from that build. Do the same for other producers; a current default branch is a
-navigation aid, not proof of the deployed behavior.
+Switch to the tracked branch or release and the dependencies identified above.
+Do the same for other producers; a default branch or supplied architecture
+snapshot is a navigation aid, not proof of deployed behavior. Use concepts for
+protocol semantics and that deployed implementation for component behavior.
 
 ## 2. Analyze each component independently
 
-Group evidence by process and component (for example: host application, chain
+Group evidence by process and component (for example: host/HOPR boundary, chain
 connector, strategy, graph/path selection, transport, session, and Exit target
 connection). Use captured targets, resource attributes, or source declarations
 to identify ownership. Do not merge components merely because they log at the
@@ -96,28 +112,41 @@ those measurements count the same thing before subtracting or forming ratios.
 Only after the local analyses, align the relevant timelines. Normalize timestamps
 to UTC but retain original times and clock uncertainty. Use explicit captured
 bindings to join process/node, request, session, peer, channel, and trace identities.
-A session ID is scoped to the producer and process lifetime; a channel also needs
-direction and, when present, epoch. Pseudonyms, peer IDs and chain addresses are
-not interchangeable. Coincident timestamps alone establish no causal link.
+Record each identity's kind and the evidence establishing a binding: chain address,
+transport peer/offchain identity, session ID or pseudonym, and directed channel
+source/destination, ID and epoch when available. Scope session IDs to producer and
+process lifetime; retain the Exit identity and session target as separate fields.
+Join unlike identifier types only through evidenced bindings, never coincident
+timestamps.
 
 Find the last demonstrated success and first demonstrated failure along the
 expected operation. Use only the relevant rows below; each comparison needs
 evidence from the owning components, or an explicit gap.
 
+Relay tickets and PIX Exit incentives are distinct mechanisms (concepts §3.2 and
+§7). Establish the deployed revision and enabled features for each before using
+its state; evidence of one mechanism does not establish the other's health.
+
 | Failing operation | Compare across the boundary | Check that distinguishes explanations |
 |---|---|---|
-| Client startup/readiness | Host's startup failure with connector initialization, backend compatibility and chain synchronization | Compare the last completed stage with the next error and the deployed configuration/schema; successful synchronization does not prove later initialization succeeded. |
+| HOPR startup/readiness | HOPR initialization result at the host boundary with connector initialization, backend compatibility and chain synchronization | Compare the last completed HOPR stage with the next error and the deployed configuration/schema; successful synchronization does not prove later initialization succeeded. Hand off failures confined to host startup. |
+| HOPR chain transaction stalls | HOPR submission request, chain-service acceptance or rejection, chain execution and indexed outcome | Correlate a request/transaction binding and timestamps where available. Distinguish failure to submit, pending execution, execution failure and stale observation; a healthy read path does not prove submission works. |
 | No usable route | Connector's fresh directed-channel view, transport reachability, strategy decisions and graph/path rejection | Inspect the rejected edge or constraint at the failure time. Distinguish unavailable funds/allowance, stale topology, disconnected peers and path constraints. Apply the final-hop exception from concepts. |
-| Session will not establish | Entry's request and challenge with Exit's admission/response and target connection | Determine whether the request arrived, was rejected, or its response failed to return. A local send proves neither remote receipt nor target availability. |
-| Established session stalls | Entry's sends/receives, Exit's target reads/writes, session progress and usable SURB supply | Separate no target response, no usable reply path, session loss/retries, and local backpressure. A reported buffer estimate is not proof that its contents are usable; check invalidation or expiry evidence when present. |
+| Session will not establish | Entry request/challenge, Exit admission, target selection/connection, and response-path evidence | Reconstruct the stages and their order from the deployed Exit implementation. Distinguish an undelivered request, admission rejection, target-policy rejection, connection failure and missing return response. Check effective target restrictions/configuration where relevant; a successful local send proves neither Exit receipt nor target connection. |
+| Established session stalls | Forward delivery to the Exit, target writes/responses, then reply delivery and Entry receive/reassembly | Find the first unsupported or failed boundary. Check usable SURBs and return-path evidence independently of forward delivery; routes need not match. Distinguish target silence, reply-path failure, session loss/retries and HOPR backpressure. A positive buffer estimate does not prove usable contents; inspect invalidation/expiry evidence when present. |
 | PIX prevents progress | Session's agreement/gate decision with strategy/pool submission and observed settlement | Correlate the same agreement and phase. Separate a retry or queued submission from successful settlement. |
 | Relay/ticket failure | Hop transport and acknowledgement evidence with directed channel state and ticket lifecycle | Check the relevant hop and epoch; distinguish forwarding, acknowledgement, winning and redemption using concepts. |
 
 For example, when a client connects but receives no data, first determine whether
-its host submitted data to the session. Next look for Exit receipt and target
-response. If the target produced a response but the client did not receive it,
-inspect the Exit's reply/SURB evidence and then the Entry's receive/reassembly
-evidence. If no Exit capture exists, report the boundary as unknown and request
+its host submitted data to the session. Next look for Exit receipt, target
+connection/write and target response. If the target produced a response but the
+Entry did not receive it, inspect the Exit's reply/SURB evidence and the Entry's
+receive/reassembly evidence. If HOPR handed the response to the host but the
+product failed afterward,
+prepare a handoff for the application owner with the corresponding operation,
+payload/error metadata and time window. A target connection alone proves neither
+a target response nor successful delivery back to the host.
+If no Exit capture exists, report the boundary as unknown and request
 that bounded window; do not label the Exit healthy from the client's ready state.
 
 ## 4. Test an explanation
@@ -146,6 +175,11 @@ Report the failed operation and window, producer versions and capture limitation
 component findings, the correlation that supports the explanation, and the check
 that confirmed or rejected it. Cite artifact locations and the applicable concepts
 summary sections. Distinguish observations, inferences, and untested alternatives.
+
+For an external-application handoff, name the last evidenced HOPR boundary, the
+unobserved or failing next stage, and the specific input/output or error the owner
+should inspect. Limit a success claim to the observed operation and direction;
+do not infer end-to-end health from a connection or a ready state.
 
 End with the smallest next action and expected result. If a fix or mitigation was
 applied within scope, repeat the original operation and check both recovery and

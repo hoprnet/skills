@@ -1,12 +1,22 @@
 ---
 name: debug
 description: >
-  Diagnose HOPR incidents from client, entry, relay, or exit logs, metrics,
-  traces, and captured state. Use for failed startup, connectivity, routing,
-  channels, sessions, SURBs, PIX, or stalled traffic.
+  Diagnose HOPR protocol and implementation failures from logs, metrics,
+  traces, and captured state: entry, relay, routing, sessions, SURBs, tickets,
+  PIX, exit forwarding, and HOPR chain dependencies. External application and
+  Gnosis VPN product debugging belongs to the application's owner.
 ---
 
 # Diagnose a HOPR incident
+
+Scope covers the application-to-HOPR entry boundary, entry and relay transport,
+routing, sessions, SURBs, exit/session forwarding, and HOPR-related chain state
+and transaction dependencies.
+
+Host applications and target services provide boundary evidence. When evidence
+points inside an external application or target service, report the last HOPR
+boundary supported by evidence, the remaining uncertainty, and what its owner
+should investigate. Hand off product diagnosis, including Gnosis VPN internals.
 
 1. **Load [concepts](../concepts/SKILL.md) first.** Follow its protocol-summary
    instructions before interpreting HOPR behavior, including sessions, network
@@ -23,7 +33,10 @@ description: >
 
 Use the application's documentation and deployed revision for collection and
 configuration. Start from the evidence actually available; telemetry differs
-between applications, builds, nodes, and collectors.
+between applications, builds, nodes, and collectors. For each incident, record
+the [producer and collection coverage](references/logs-and-traces.md#incident-telemetry-record).
+OTLP is optional: continue with local logs, metrics, or captured state when no
+collector is available. No specific deployment is required.
 
 Return the supported finding, evidence locations, remaining uncertainty, and
 smallest next check. Prefer existing captures and read-only queries. Changes to
