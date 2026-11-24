@@ -85,6 +85,20 @@ Choose the evidence path before querying:
 - **A component dump is present:** only then load
   [state snapshots](state-snapshots.md) and the producer's schema.
 
+Optional specialist skills can help when installed:
+
+- **Measured performance problem:** use
+  [swe:performance](https://github.com/Teebor-Choka/skills/blob/main/engineering/swe/swe/skills/performance/SKILL.md)
+  for profiling and before/after measurement, alongside the HOPR-specific
+  [benchmarking guidance](../../concepts/references/benchmarking.md).
+- **Suspected Rust concurrency problem:** use the concurrency references in
+  [swe:rust](https://github.com/Teebor-Choka/skills/blob/main/engineering/swe/swe/skills/rust/SKILL.md)
+  for stalls, cancellation, locks, queues, or shutdown. Treat suggested causes
+  as hypotheses and check them against the deployed code and dependencies.
+
+These skills are not required for an investigation. If unavailable, continue with
+the evidence and HOPR guidance here; follow the affected repository's own rules.
+
 ### Use the metrics that reached this capture
 
 Discover series in the supplied capture or the selected backend's metadata, with
