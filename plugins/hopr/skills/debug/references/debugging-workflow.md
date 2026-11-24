@@ -157,6 +157,28 @@ existing log window, trace, dump or read-only query. Check the relevant implemen
 at the deployed revision when the meaning of a field or transition is uncertain.
 Use concepts' implementation references as leads, then confirm against that revision.
 
+**Strongly prefer a HOPR integration reproduction** when the failing behavior can
+be exercised by [hopr-integration-tests](https://github.com/hoprnet/hopr-integration-tests/blob/main/README.md).
+Read its README and select a suitable existing scenario, or add a focused scenario
+when within scope. Use the matching release line and the closest available component
+revisions, features, configuration, topology and traffic to the incident; check the
+harness's actual resolved binaries and dependency pins rather than assuming a branch
+matches the deployment. Record any differences and how they limit the conclusion.
+
+Reproduce the observed symptom and a distinguishing prediction, keeping the test
+command, harness and component revisions, settings, results and relevant run artifacts.
+Use the harness's documented local log collection; OTLP is optional. Repeat when
+needed to characterize intermittent failures. If a fix is in scope and the scenario
+exercises the right boundary, run it before and after the fix and retain a regression
+test when appropriate. A local reproduction supports an explanation but does not by
+itself prove that the live incident had the same cause.
+
+If the harness cannot represent the incident, prerequisites or authorization are
+missing, or the attempt does not reproduce it, record what was tried and why; continue
+with local logs, metrics, captured state, or another suitable check. Do not require a
+collector or a particular deployment. Do not run funded or external-network scenarios
+without authorization for that scope.
+
 If the evidence is insufficient, specify a bounded reproduction: the same operation,
 participating processes, required identifiers, component/target log filter, collection
 window, expected success/failure evidence, and how to restore any changed setting.
@@ -175,6 +197,12 @@ Report the failed operation and window, producer versions and capture limitation
 component findings, the correlation that supports the explanation, and the check
 that confirmed or rejected it. Cite artifact locations and the applicable concepts
 summary sections. Distinguish observations, inferences, and untested alternatives.
+
+For a substantial issue, PR description, or incident write-up, optionally use
+[write-clear-explainers](https://github.com/SCBuergel/sebs-ai-tools/blob/main/skills/write-clear-explainers/SKILL.md)
+if it is installed and the user requests writing or review. Base the text on the
+investigation's evidence and preserve its uncertainties. If it is unavailable,
+write the report using the guidance here; it is not a dependency of debugging.
 
 For an external-application handoff, name the last evidenced HOPR boundary, the
 unobserved or failing next stage, and the specific input/output or error the owner

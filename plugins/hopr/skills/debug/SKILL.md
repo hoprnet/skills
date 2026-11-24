@@ -38,6 +38,11 @@ the [producer and collection coverage](references/logs-and-traces.md#incident-te
 OTLP is optional: continue with local logs, metrics, or captured state when no
 collector is available. No specific deployment is required.
 
+Strongly prefer reproducing suitable HOPR failures in
+[hopr-integration-tests](https://github.com/hoprnet/hopr-integration-tests/blob/main/README.md)
+as described in the [debugging workflow](references/debugging-workflow.md#4-test-an-explanation).
+Continue investigating available evidence when reproduction is not feasible.
+
 Return the supported finding, evidence locations, remaining uncertainty, and
 smallest next check. Prefer existing captures and read-only queries. Changes to
 configuration, restarts, funding, channel operations, or new traffic require
