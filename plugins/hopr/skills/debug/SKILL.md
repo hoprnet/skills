@@ -28,6 +28,8 @@ should investigate. Hand off product diagnosis, including Gnosis VPN internals.
 3. **Load only the evidence guidance needed for that incident:**
    - [Logs and traces](references/logs-and-traces.md) for log-only captures,
      INFO/DEBUG/TRACE investigation, or OTLP collection and correlation.
+   - [Session log triage](references/session-log-triage.md) for stalls, low
+     throughput, failed session establishment, or return-path symptoms.
    - [State snapshots](references/state-snapshots.md) only when the capture
      contains a component dump; resolve its schema from the producer's branch.
 

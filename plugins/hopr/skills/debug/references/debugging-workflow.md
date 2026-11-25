@@ -188,6 +188,12 @@ its state; evidence of one mechanism does not establish the other's health.
 | Cover traffic stops or degrades | Producer configuration and attempts, available dashboard measurements, node/session outcomes and relevant chain-service evidence | Check the same deployment and time window; distinguish a disabled producer, missing or failed attempts, route/session failures and a telemetry gap. Use identifiers or explicit bindings to correlate individual operations; a change in an aggregate is a lead, not a root cause. |
 | Relay/ticket failure | Hop transport and acknowledgement evidence with directed channel state and ticket lifecycle | Check the relevant hop and epoch; distinguish forwarding, acknowledgement, winning and redemption using concepts. |
 
+For a stall, low throughput, failed session establishment, or suspected return-path
+failure, use [session log triage](session-log-triage.md) to select the affected
+session and distinguish arrival, local processing, delivery and payment gates.
+For a relay-only capture, start from the relay's own forwarding and acknowledgement
+evidence; a client or host application need not be identifiable in its logs.
+
 For example, when a client connects but receives no data, first determine whether
 its host submitted data to the session. Next look for Exit receipt, target
 connection/write and target response. If the target produced a response but the

@@ -19,6 +19,12 @@ JSON strings, and an identifier may live on a parent span. For text logs, retain
 source file/line references and multiline errors. Do not silently discard malformed
 or non-JSON records while treating the remainder as a complete capture.
 
+For a large capture, compare event counts and rates across bounded windows before
+selecting the failure window; a frequent warning is not automatically the cause.
+Use the [log triage recipes](../../concepts/references/log-triage.md) only after
+checking the actual format. Search exact messages or structured fields and inspect
+their values: a field's presence alone may include both positive and negative states.
+
 Resolve a message or span's meaning by searching its exact text or target in the
 producer's source at the deployed revision. Inspect the declaration, caller,
 fields and gates. Only fetch the relevant source; an exhaustive event catalog
