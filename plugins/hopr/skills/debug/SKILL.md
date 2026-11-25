@@ -18,10 +18,11 @@ points inside an external application or target service, report the last HOPR
 boundary supported by evidence, the remaining uncertainty, and what its owner
 should investigate. Hand off product diagnosis, including Gnosis VPN internals.
 
-1. **Load [concepts](../concepts/SKILL.md) first.** Follow its protocol-summary
-   instructions before interpreting HOPR behavior, including sessions, network
-   roles, channels, SURBs, and PIX. Use its implementation references when the
-   evidence points below the protocol layer.
+1. **Load [concepts](../concepts/SKILL.md) first.** Use it and its protocol
+   summary for descriptions of HOPR network elements, their roles and how they
+   interact before interpreting the incident. Follow its instructions for
+   sessions, channels, SURBs and PIX; use its implementation references when
+   the evidence points below the protocol layer.
 2. **Follow the [debugging workflow](references/debugging-workflow.md).** Scope
    one incident, analyze each component independently, then correlate the
    components to locate the first failed boundary and test an explanation.
