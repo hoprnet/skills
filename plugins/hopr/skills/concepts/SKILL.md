@@ -124,6 +124,8 @@ go to the implementation references next; those behaviors are not in the RFCs.
 Load these only when the symptom points at them — the SKILL.md body above covers
 the protocol-level ground truth needed for most diagnoses.
 
+- [debug](../debug/SKILL.md) — operational investigations using logs,
+  metrics, or traces.
 - `references/implementation-gotchas.md` — emergent behavior of the current Rust
   implementation (not in any RFC): silent `FlowControlConfig` no-ops, fixed-size
   packet wire-format traps, the stalled-write-pump OOM path, and the SURB
