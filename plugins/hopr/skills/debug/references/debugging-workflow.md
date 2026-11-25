@@ -23,7 +23,7 @@ including disabled or unavailable OTLP and unresolved fields. This establishes
 which missing signals are evidence gaps before interpreting the incident.
 
 Map the roles involved in this operation using the concepts summary (§2.4, §3,
-§5, §6, §7). Roles describe behavior, not binary names; one application can fulfill
+§5, §6, §7, §8). Roles describe behavior, not binary names; one application can fulfill
 more than one role.
 
 | Participant | Role in the investigation |
@@ -32,6 +32,8 @@ more than one role.
 | Relay | Forwards packets between hops; inspect the relevant transport, directed channels, tickets and acknowledgements when implemented and enabled. |
 | HOPR destination / Exit | Identify the HOPR endpoint receiving the session request, its admission/forwarding implementation, and evidence of replies using Entry-supplied SURBs. |
 | Chain service (for example Blokli) | Treat connection state, freshness of indexed state, and transaction submission/outcomes as separate dependency checks. A healthy chain service does not establish packet-forwarding health. |
+| PIX participants | PIX is an Exit-incentive mechanism, not a node role: where enabled, identify the Entry's payment strategy, the Exit's agreement and gate, and the configured pool/settlement implementation. Inspect agreement and settlement evidence separately from relay tickets (concepts §7). |
+| Cover-traffic producer | Identify the application or service generating cover traffic, its configuration and the participating HOPR nodes. Determine whether the incident concerns the production cover-traffic service or an application's own cover-traffic/probing implementation; their settings and evidence need not match (concepts §6.2, §8). |
 | Session target / external service | Identify the service the Exit is asked to reach. Use connection, request and response evidence at the Exit boundary; hand off diagnosis inside that service. |
 
 Record the HOPR destination/Exit identity separately from the requested session
@@ -84,6 +86,40 @@ Choose the evidence path before querying:
   described below, alongside the component timeline.
 - **A component dump is present:** only then load
   [state snapshots](state-snapshots.md) and the producer's schema.
+
+### Optional operational sources
+
+When the incident involves the relevant production environment and access is
+available, use these sources alongside the affected component's own capture:
+
+- **Cover traffic:** open the [cover-traffic Grafana dashboard](https://grafana.prod.hoprnet.link/d/ct-core-v5/ct-core-v5).
+  Select the incident window and the relevant network, service or node using the
+  filters actually available. Inspect the displayed series and their labels,
+  units and gaps; compare changes with the producer and node logs. A dashboard
+  aggregate alone does not identify a failed hop or prove session delivery.
+- **Chain state and transactions:** inspect Blokli logs in
+  [Cloud Logging](https://cloudlogging.app.goo.gl/cVYqZcKeNe5Xu5dEA) or
+  [Graylog](https://graylog.prod.hoprnet.link/search/6a4e844c6a54421c503dc32f).
+  The actual time window should be adjusted according to the relevant timestamps
+  in the logs.
+  Filter the incident window and actual network/instance using available fields;
+  correlate observed request, transaction, channel or account identifiers to
+  client and node records. Separate submission, chain outcome and indexed state;
+  check freshness before interpreting a missing update.
+- **Session evidence:** inspect [HOSE peers](https://hose.prod.hoprnet.link/peers)
+  when it covers the relevant deployment. Use observed peer/session bindings to
+  find the applicable capture, then check its participants, time window, signals
+  and retention before comparing it with component logs. A peer's presence or a
+  missing record does not alone establish an operation's outcome.
+- **Other tools:** use the [production tools landing page](https://landing.prod.hoprnet.link/)
+  to discover relevant sources, then verify their environment and coverage before
+  treating results as incident evidence.
+
+Record the source, time range, filters and evidence locations used. These links
+are production-specific starting points; if a source is inaccessible or does not
+cover the incident, mark the gap and continue with available local logs, metrics
+or captured state. Opening a source does not imply permission to change its
+configuration, start a capture, or send traffic.
 
 Optional specialist skills can help when installed:
 
@@ -149,6 +185,7 @@ its state; evidence of one mechanism does not establish the other's health.
 | Session will not establish | Entry request/challenge, Exit admission, target selection/connection, and response-path evidence | Reconstruct the stages and their order from the deployed Exit implementation. Distinguish an undelivered request, admission rejection, target-policy rejection, connection failure and missing return response. Check effective target restrictions/configuration where relevant; a successful local send proves neither Exit receipt nor target connection. |
 | Established session stalls | Forward delivery to the Exit, target writes/responses, then reply delivery and Entry receive/reassembly | Find the first unsupported or failed boundary. Check usable SURBs and return-path evidence independently of forward delivery; routes need not match. Distinguish target silence, reply-path failure, session loss/retries and HOPR backpressure. A positive buffer estimate does not prove usable contents; inspect invalidation/expiry evidence when present. |
 | PIX prevents progress | Session's agreement/gate decision with strategy/pool submission and observed settlement | Correlate the same agreement and phase. Separate a retry or queued submission from successful settlement. |
+| Cover traffic stops or degrades | Producer configuration and attempts, available dashboard measurements, node/session outcomes and relevant chain-service evidence | Check the same deployment and time window; distinguish a disabled producer, missing or failed attempts, route/session failures and a telemetry gap. Use identifiers or explicit bindings to correlate individual operations; a change in an aggregate is a lead, not a root cause. |
 | Relay/ticket failure | Hop transport and acknowledgement evidence with directed channel state and ticket lifecycle | Check the relevant hop and epoch; distinguish forwarding, acknowledgement, winning and redemption using concepts. |
 
 For example, when a client connects but receives no data, first determine whether

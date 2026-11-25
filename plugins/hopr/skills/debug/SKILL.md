@@ -3,7 +3,7 @@ name: debug
 description: >
   Diagnose HOPR protocol and implementation failures from logs, metrics,
   traces, and captured state: entry, relay, routing, sessions, SURBs, tickets,
-  PIX, exit forwarding, and HOPR chain dependencies. External application and
+  PIX, cover traffic, exit forwarding, and HOPR chain dependencies. External application and
   Gnosis VPN product debugging belongs to the application's owner.
 ---
 
@@ -11,7 +11,7 @@ description: >
 
 Scope covers the application-to-HOPR entry boundary, entry and relay transport,
 routing, sessions, SURBs, exit/session forwarding, and HOPR-related chain state
-and transaction dependencies.
+and transaction dependencies, including PIX and cover-traffic operations.
 
 Host applications and target services provide boundary evidence. When evidence
 points inside an external application or target service, report the last HOPR
